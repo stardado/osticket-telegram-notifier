@@ -22,7 +22,7 @@ $c["api_base"]  = "http://127.0.0.1:8089";
 $c["state_dir"] = $argv[2];
 $c["log_file"]  = $argv[2] . "/bot.log";
 $c["telegram_token"] = "000:TESTTOKEN";
-$c["telegram_chat_id"] = "-100999";
+$c["telegram_chat_id"] = "-100999"; $c["poll_seconds"] = 0;
 $c["actions"] = [["label"=>"Geloest","status_id"=>2],["label"=>"Geschlossen","status_id"=>3]];
 $c["osticket_dir"] = $argv[2] . "/kein-osticket";   // darf in diesen Tests nie geladen werden
 file_put_contents($argv[2] . "/ticketbot_config.php", "<?php\nreturn " . var_export($c, true) . ";\n");

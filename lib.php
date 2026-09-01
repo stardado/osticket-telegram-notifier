@@ -128,7 +128,7 @@ function tb_escape(string $text): string {
  * code 0 bedeutet: keine auswertbare Antwort (Netzwerkfehler, Timeout,
  * HTML-Fehlerseite eines Proxys statt JSON).
  */
-function tb_api(array $config, string $method, array $data): array {
+function tb_api(array $config, string $method, array $data, int $timeout = 30): array {
     $url = "{$config['api_base']}/bot{$config['telegram_token']}/$method";
     $ch  = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
@@ -139,7 +139,7 @@ function tb_api(array $config, string $method, array $data): array {
     // immer, und jeder weitere Cron-Lauf beendet sich mit 'anderer Lauf
     // aktiv'. Der Bot stuende still, das Log saehe harmlos aus.
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
     $response = curl_exec($ch);
     $error    = curl_error($ch);
     curl_close($ch);

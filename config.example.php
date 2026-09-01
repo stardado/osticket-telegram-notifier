@@ -54,6 +54,11 @@ return [
         ['label' => '🔒 Geschlossen', 'status_id' => 3],
     ],
 
+    // Wie lange telegram_actions.php pro Cron-Minute aktiv auf Klicks wartet
+    // (Long-Polling). Klicks wirken so binnen einer Sekunde statt erst beim
+    // naechsten Cron-Lauf. Muss unter 60 bleiben. Standard 50.
+    // 'poll_seconds' => 50,
+
     // osTicket-Installationsverzeichnis (enthaelt main.inc.php und api/).
     // Nur fuer telegram_actions.php noetig.
     'osticket_dir' => '/var/www/osTicket/upload',

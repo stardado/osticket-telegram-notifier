@@ -43,15 +43,28 @@ foreach ($actions as $a) {
 
 $lock = tb_lock($config, 'actions');
 
-// Nur callback_query anfordern: Gruppennachrichten sind fuer dieses Script
-// uninteressant, und so bleibt der Privacy-Mode des Bots ohne Bedeutung.
-$offset = tb_read_state($offsetFile);
-$r = tb_api($config, 'getUpdates', [
-    'offset'          => $offset,
-    'timeout'         => 0,
-    'allowed_updates' => json_encode(['callback_query']),
-]);
-if (!$r['ok']) {
+// Long-Polling: Cron kann hoechstens minuetlich starten, ein Klick soll aber
+// sofort wirken. Deshalb wartet jeder Lauf bis zu poll_seconds aktiv auf
+// Updates (getUpdates mit timeout) und beendet sich rechtzeitig vor dem
+// naechsten Cron-Start. Nebeneffekt: answerCallbackQuery kommt innerhalb der
+// wenigen Sekunden an, die Telegram dafuer zulaesst - das Popup am Button
+// funktioniert nur so. In Tests steht poll_seconds auf 0: ein Durchlauf.
+$pollBudget = (int)($config['poll_seconds'] ?? 50);
+$started    = time();
+
+do {
+    $remaining = $pollBudget - (time() - $started);
+    $wait      = max(0, min(25, $remaining));
+
+    // Nur callback_query anfordern: Gruppennachrichten sind fuer dieses Script
+    // uninteressant, und so bleibt der Privacy-Mode des Bots ohne Bedeutung.
+    $offset = tb_read_state($offsetFile);
+    $r = tb_api($config, 'getUpdates', [
+        'offset'          => $offset,
+        'timeout'         => $wait,
+        'allowed_updates' => json_encode(['callback_query']),
+    ], $wait + 15);
+    if (!$r['ok']) {
     if ($r['code'] === 401) {
         tb_log("🚨 [actions] KONFIGURATIONSFEHLER (401): {$r['desc']} - Token pruefen!");
     } elseif ($r['code'] === 409) {
@@ -65,67 +78,16 @@ if (!$r['ok']) {
     exit(1);
 }
 
-tb_alerts_resolve($config, 'actions:');
-$updates = is_array($r['result']) ? $r['result'] : [];
-if (!$updates) {
-    exit(0);
-}
+    tb_alerts_resolve($config, 'actions:');
+    $updates = is_array($r['result']) ? $r['result'] : [];
 
-$booted = false;
 foreach ($updates as $u) {
-    $next = (int)$u['update_id'] + 1;
-    $cq   = $u['callback_query'] ?? null;
-    if (!$cq) {
-        tb_write_state($offsetFile, $next);
-        continue;
-    }
-
-    $cqId   = (string)$cq['id'];
-    $data   = (string)($cq['data'] ?? '');
-    $from   = $cq['from'] ?? [];
-    $msg    = $cq['message'] ?? null;
-    $who    = trim(($from['first_name'] ?? '') . ' ' . ($from['last_name'] ?? ''));
-    $who   .= isset($from['username']) ? " (@{$from['username']})" : '';
-    $who    = $who ?: 'Unbekannt';
-    $answer = fn(string $text, bool $alert = false) => tb_api($config, 'answerCallbackQuery', [
-        'callback_query_id' => $cqId,
-        'text'              => $text,
-        'show_alert'        => $alert ? 'true' : 'false',
-    ]);
-
-    // Der 'erledigt'-Button nach einem erfolgreichen Statuswechsel.
-    if ($data === 'noop') {
-        $answer('');
-        tb_write_state($offsetFile, $next);
-        continue;
-    }
-
-    // Einzige Berechtigungspruefung: der Klick muss aus der konfigurierten
-    // Gruppe kommen. Wer dort Mitglied ist, darf Tickets schliessen.
-    $fromChat = (string)($msg['chat']['id'] ?? '');
-    if ($fromChat !== $chatId) {
-        tb_log("⛔ [actions] Klick von $who aus fremdem Chat $fromChat ignoriert.");
-        $answer('Nicht erlaubt.', true);
-        tb_write_state($offsetFile, $next);
-        continue;
-    }
-
-    if (!preg_match('/^close:(\d+):(\d+)$/', $data, $m)) {
-        tb_log("⚠️ [actions] Unbekannte Aktion '$data' von $who.");
-        $answer('Unbekannte Aktion.');
-        tb_write_state($offsetFile, $next);
-        continue;
-    }
-    $ticketId = (int)$m[1];
-    $statusId = (int)$m[2];
-    if (!isset($allowedStatus[$statusId])) {
-        tb_log("⛔ [actions] Status $statusId ist nicht konfiguriert, Klick von $who auf Ticket-ID $ticketId ignoriert.");
-        $answer('Dieser Status ist nicht erlaubt.', true);
-        tb_write_state($offsetFile, $next);
-        continue;
-    }
-
-    if (!$booted) {
+    // Verarbeitung in einer Funktion: der osTicket-Bootstrap laeuft auf
+    // Top-Level und ueberschreibt dabei globale Variablen mit generischen
+    // Namen ($msg, $offset, $data ...). Funktionslokale Variablen sind davor
+    // sicher. Braucht die Funktion osTicket, meldet sie das, der Bootstrap
+    // passiert hier, und sie wird erneut aufgerufen.
+    if (tb_handle_update($config, $u, $allowedStatus, $offsetFile) === 'boot') {
         // osTicket laden, wie es dessen eigener api/cron.php tut. Das MUSS auf
         // Top-Level passieren, nicht in einer Funktion: osTicket legt beim
         // Einbinden Variablen im Dateiscope an (z.B. $StopIteration in
@@ -144,25 +106,111 @@ foreach ($updates as $u) {
         require_once $tbApiInc;
         ob_end_clean();
         chdir($tbCwd);
-        $booted = true;
+        tb_handle_update($config, $u, $allowedStatus, $offsetFile);
+    }
+}
+
+} while (time() - $started < $pollBudget);
+
+/**
+ * Ein Update verarbeiten. Rueckgabe 'boot', wenn osTicket noch nicht geladen
+ * ist, aber gebraucht wird - der Aufrufer laedt es und ruft erneut auf.
+ */
+function tb_handle_update(array $config, array $u, array $allowedStatus, string $offsetFile): string {
+    $chatId = (string)$config['telegram_chat_id'];
+    $next   = (int)$u['update_id'] + 1;
+    $cq     = $u['callback_query'] ?? null;
+    if (!$cq) {
+        tb_write_state($offsetFile, $next);
+        return 'done';
+    }
+
+    $cqId  = (string)$cq['id'];
+    $data  = (string)($cq['data'] ?? '');
+    $from  = $cq['from'] ?? [];
+    $msg   = $cq['message'] ?? null;
+    $msgId = (int)($msg['message_id'] ?? 0);
+    $first = $from['first_name'] ?? 'Unbekannt';
+    $who   = trim($first . ' ' . ($from['last_name'] ?? ''));
+    $who  .= isset($from['username']) ? " (@{$from['username']})" : '';
+
+    $answer = fn(string $text, bool $alert = false) => tb_api($config, 'answerCallbackQuery', [
+        'callback_query_id' => $cqId,
+        'text'              => $text,
+        'show_alert'        => $alert ? 'true' : 'false',
+    ]);
+    // Rueckmeldung als Antwort auf die Ticket-Nachricht in der Gruppe. Das
+    // Popup (answerCallbackQuery) ist fluechtig und kommt nur an, wenn wir
+    // schnell genug sind; die Nachricht bleibt sichtbar.
+    $reply = function (string $text) use ($config, $chatId, $msgId): void {
+        $x = tb_api($config, 'sendMessage', ['chat_id' => $chatId, 'text' => $text, 'reply_to_message_id' => $msgId]);
+        if (!$x['ok']) {
+            tb_log("⚠️ [actions] Rueckmeldung konnte nicht gesendet werden ({$x['code']}): {$x['desc']}");
+        }
+    };
+
+    // Der 'erledigt'-Button nach einem erfolgreichen Statuswechsel.
+    if ($data === 'noop') {
+        $answer('');
+        tb_write_state($offsetFile, $next);
+        return 'done';
+    }
+
+    // Einzige Berechtigungspruefung: der Klick muss aus der konfigurierten
+    // Gruppe kommen. Wer dort Mitglied ist, darf Tickets schliessen.
+    $fromChat = (string)($msg['chat']['id'] ?? '');
+    if ($fromChat !== $chatId) {
+        tb_log("⛔ [actions] Klick von $who aus fremdem Chat $fromChat ignoriert.");
+        $answer('Nicht erlaubt.', true);
+        tb_write_state($offsetFile, $next);
+        return 'done';
+    }
+
+    if (!preg_match('/^close:(\d+):(\d+)$/', $data, $m)) {
+        tb_log("⚠️ [actions] Unbekannte Aktion '$data' von $who.");
+        $answer('Unbekannte Aktion.');
+        tb_write_state($offsetFile, $next);
+        return 'done';
+    }
+    $ticketId = (int)$m[1];
+    $statusId = (int)$m[2];
+    if (!isset($allowedStatus[$statusId])) {
+        tb_log("⛔ [actions] Status $statusId ist nicht konfiguriert, Klick von $who auf Ticket-ID $ticketId ignoriert.");
+        $answer('Dieser Status ist nicht erlaubt.', true);
+        tb_write_state($offsetFile, $next);
+        return 'done';
+    }
+
+    // APICALL wird von osTickets api.inc.php definiert.
+    if (!defined('APICALL')) {
+        return 'boot';
     }
 
     $res = tb_set_ticket_status($ticketId, $statusId, $who);
     if ($res['ok']) {
         tb_log("✅ [actions] Ticket #{$res['number']} (ID $ticketId) von $who auf '{$res['status']}' gesetzt.");
-        $answer("✅ Ticket #{$res['number']} ist jetzt: {$res['status']}");
+        $a = $answer("✅ #{$res['number']} → {$res['status']}");
+        if (!$a['ok']) {
+            tb_log("ℹ️ [actions] Popup nicht zugestellt ({$a['desc']}) - Klick lag zu lange zurueck, Rueckmeldung kommt als Nachricht.");
+        }
+        $reply("✅ Ticket #{$res['number']} → {$res['status']}\nvon $first, " . date('d.m.Y H:i'));
         // Buttons durch eine Erledigt-Zeile ersetzen, damit niemand doppelt klickt.
-        $label = $allowedStatus[$statusId] . ' · ' . ($from['first_name'] ?? 'Unbekannt') . ' · ' . date('d.m. H:i');
-        tb_api($config, 'editMessageReplyMarkup', [
+        $label = $allowedStatus[$statusId] . ' · ' . $first . ' · ' . date('d.m. H:i');
+        $e = tb_api($config, 'editMessageReplyMarkup', [
             'chat_id'      => $chatId,
-            'message_id'   => (int)($msg['message_id'] ?? 0),
+            'message_id'   => $msgId,
             'reply_markup' => json_encode(['inline_keyboard' => [[['text' => $label, 'callback_data' => 'noop']]]], JSON_UNESCAPED_UNICODE),
         ]);
+        if (!$e['ok']) {
+            tb_log("⚠️ [actions] Buttons konnten nicht ersetzt werden ({$e['code']}): {$e['desc']}");
+        }
     } else {
         tb_log("❌ [actions] Ticket-ID $ticketId, Klick von $who: {$res['msg']}");
         $answer($res['msg'], true);
+        $reply("⚠️ $first: {$res['msg']}");
     }
     tb_write_state($offsetFile, $next);
+    return 'done';
 }
 
 /**
@@ -191,9 +239,8 @@ function tb_set_ticket_status(int $ticketId, int $statusId, string $who): array 
         $why = $errors ? implode(' ', array_map('strip_tags', (array)$errors)) : 'osTicket hat den Statuswechsel abgelehnt (Pflichtfelder leer oder offene Aufgaben?).';
         return ['ok' => false, 'msg' => $why, 'number' => $ticket->getNumber(), 'status' => $status->getName()];
     }
-    // Interne Notiz, fuer den Kunden unsichtbar, im Verlauf nachvollziehbar.
-    $noteErrors = [];
-    $ticket->postNote(['title' => 'Statusänderung via Telegram', 'note' => $note], $noteErrors, 'Telegram-Bot', false);
+    // setStatus() legt mit $note bereits eine interne Notiz ('Status Changed')
+    // an, fuer den Kunden unsichtbar. Eine zweite waere doppelt.
 
     return ['ok' => true, 'msg' => '', 'number' => $ticket->getNumber(), 'status' => $status->getName()];
 }

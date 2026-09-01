@@ -34,7 +34,7 @@ sleep 0.5
 php -r '
 $c = require $argv[1];
 $c["api_base"]="http://127.0.0.1:8089"; $c["state_dir"]=$argv[2]; $c["log_file"]=$argv[2]."/bot.log";
-$c["telegram_token"]="000:TESTTOKEN"; $c["telegram_chat_id"]="-100999";
+$c["telegram_token"]="000:TESTTOKEN"; $c["telegram_chat_id"]="-100999"; $c["poll_seconds"]=0;
 $c["actions"]=[["label"=>"✅ Gelöst","status_id"=>2],["label"=>"🔒 Geschlossen","status_id"=>3]];
 $c["osticket_dir"]=$c["osticket_dir"] ?? "/var/www/osTicket/upload";
 file_put_contents($argv[2]."/ticketbot_config.php","<?php\nreturn ".var_export($c,true).";\n");
@@ -89,12 +89,15 @@ check "Exit 0"                                          '[ "$(cat "$T/exit")" = 
 check "Status in DB = 2"                                '[ "$(dbq "SELECT status_id FROM ${P}ticket WHERE ticket_id=$TID")" = 2 ]'
 check "interne Notiz mit Telegram-Hinweis vorhanden"    '[ "$(dbq "SELECT COUNT(*) FROM ${P}thread_entry e JOIN ${P}thread t ON e.thread_id=t.id WHERE t.object_id=$TID AND t.object_type=\"T\" AND e.type=\"N\" AND e.body LIKE \"%Telegram%\"")" -ge 1 ]'
 check "Ereignis 'closed' im Verlauf"                    '[ "$(dbq "SELECT COUNT(*) FROM ${P}thread_event ev JOIN ${P}thread t ON ev.thread_id=t.id JOIN ${P}event e ON ev.event_id=e.id WHERE t.object_id=$TID AND t.object_type=\"T\" AND e.name=\"closed\"")" -ge 1 ]'
-check "answerCallbackQuery mit Bestaetigung"            'grep -q "answerCallbackQuery" "$MOCK_LOG" && grep -q "ist jetzt" "$MOCK_LOG"'
+check "answerCallbackQuery mit Bestaetigung"            'grep -q "answerCallbackQuery" "$MOCK_LOG" && grep -q "→ Gelöst" "$MOCK_LOG"'
 check "Buttons durch Erledigt-Zeile ersetzt"            'grep -q "editMessageReplyMarkup" "$MOCK_LOG" && grep -q "noop" "$MOCK_LOG"'
+check "Rueckmeldung als Antwort in der Gruppe"          'grep -q "reply_to_message_id\":\"7\"" "$MOCK_LOG" && grep -q "→ Gelöst" "$MOCK_LOG"'
+check "genau EINE Notiz, nicht doppelt"                 '[ "$(dbq "SELECT COUNT(*) FROM ${P}thread_entry e JOIN ${P}thread t ON e.thread_id=t.id WHERE t.object_id=$TID AND t.object_type=\"T\" AND e.type=\"N\"")" = 1 ]'
 
 echo "[E3] Nochmal 'Gelöst' klicken"
 cq 901 "close:$TID:2"; runact
 check "Hinweis 'bereits', kein Fehler-Exit"             'grep -q "bereits" "$T/bot.log" && [ "$(cat "$T/exit")" = 0 ]'
+check "Fehlgrund als Nachricht in der Gruppe"           'grep -q "⚠️ Testa: Ticket" "$MOCK_LOG"'
 
 echo "[E4] Klick auf 'Geschlossen'"
 cq 902 "close:$TID:3"; runact
