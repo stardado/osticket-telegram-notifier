@@ -98,6 +98,43 @@ function cleanAndEscape($text) {
     return strtr($text, $replacements);
 }
 
+/**
+ * Eine Nachricht an die Telegram-API senden.
+ *
+ * Rueckgabe: ['ok' => bool, 'code' => int, 'desc' => string, 'msg_id' => int]
+ * code 0 bedeutet: keine auswertbare Antwort (Netzwerkfehler, Timeout,
+ * HTML-Fehlerseite eines Proxys statt JSON).
+ */
+function sendTelegram(string $url, array $data): array {
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data, '', '&', PHP_QUERY_RFC3986));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Ohne Timeouts haelt eine haengende Verbindung die flock-Sperre fuer
+    // immer, und jeder weitere Cron-Lauf beendet sich mit 'anderer Lauf
+    // aktiv'. Der Bot stuende still, das Log saehe harmlos aus.
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    $response = curl_exec($ch);
+    $error    = curl_error($ch);
+    curl_close($ch);
+
+    if ($response === false || $error !== '') {
+        return ['ok' => false, 'code' => 0, 'desc' => "cURL: $error", 'msg_id' => 0];
+    }
+    $json = json_decode($response, true);
+    if (!is_array($json) || !array_key_exists('ok', $json)) {
+        return ['ok' => false, 'code' => 0, 'desc' => 'Keine JSON-Antwort: ' . substr(strip_tags($response), 0, 120), 'msg_id' => 0];
+    }
+    return [
+        'ok'     => $json['ok'] === true,
+        'code'   => (int)($json['error_code'] ?? 0),
+        'desc'   => (string)($json['description'] ?? ''),
+        'msg_id' => (int)($json['result']['message_id'] ?? 0),
+    ];
+}
+
 // Sperre gegen parallele Laeufe.
 // Cron startet jede Minute; ein Lauf mit Rueckstand dauert laenger als eine
 // Minute. Ohne Sperre arbeiten mehrere Prozesse dieselbe Warteschlange ab und
@@ -195,60 +232,62 @@ if ($result->num_rows > 0) {
             logMessage("🔍 DEBUG Text für Ticket $ticketNumber:\n$message");
         }
 
-        $url = "$apiBase/bot$telegramToken/sendMessage";
+        $url  = "$apiBase/bot$telegramToken/sendMessage";
         $data = [
-            'chat_id' => $chatId,
-            'text' => $message,
-            'parse_mode' => 'MarkdownV2',
-            'disable_web_page_preview' => true
+            'chat_id'                  => $chatId,
+            'text'                     => $message,
+            'parse_mode'               => 'MarkdownV2',
+            'disable_web_page_preview' => true,
         ];
+        $r = sendTelegram($url, $data);
 
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data, '', '&', PHP_QUERY_RFC3986));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        // Ohne Timeouts haelt eine haengende Verbindung die flock-Sperre fuer
-        // immer, und jeder weitere Cron-Lauf beendet sich mit 'anderer Lauf
-        // aktiv'. Der Bot stuende still, das Log saehe harmlos aus.
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-        $response = curl_exec($ch);
-        $error = curl_error($ch);
-        curl_close($ch);
+        // MarkdownV2 ist fragil. Weist Telegram die Formatierung zurueck, geht
+        // die Nachricht einmal als Klartext raus - unschoen, aber zugestellt.
+        if (!$r['ok'] && $r['code'] === 400 && preg_match('/parse|entit|too long/i', $r['desc'])) {
+            logMessage("⚠️ MarkdownV2 abgelehnt fuer Ticket $ticketNumber ({$r['desc']}), sende Klartext.");
+            $plain = [
+                'chat_id'                  => $chatId,
+                'text'                     => "📬 Neues Ticket eingegangen!\n🆔 Ticket-ID: #" . ($row['number'] ?? '')
+                                            . "\n\n📝 Betreff: " . ($row['subject'] ?? '(kein Betreff)')
+                                            . "\n\n👤 Von: " . ($row['name'] ?? 'Unbekannt')
+                                            . " 🕒 Zeit: " . $dt->format('d.m.Y H:i') . "\n$link",
+                'disable_web_page_preview' => true,
+            ];
+            $r = sendTelegram($url, $plain);
+        }
 
-        // Voruebergehende Stoerung? Dann darf die ID nicht weiterruecken.
-        $transient = false;
+        if ($r['ok']) {
+            logMessage("✅ Telegram gesendet für Ticket #$ticketNumber (ID $ticketId), msg_id: {$r['msg_id']}");
+            file_put_contents($lastIdFile, $ticketId, LOCK_EX);
+            continue;
+        }
 
-        if ($response === false || !empty($error)) {
-            logMessage("❌ cURL-Fehler bei Telegram für Ticket $ticketNumber: $error");
-            $transient = true;
-        } else {
-            $json = json_decode($response, true);
-            if (!$json || !isset($json['ok']) || $json['ok'] !== true) {
-                $code = (int)($json['error_code'] ?? 0);
-                $desc = $json['description'] ?? 'Unbekannter Fehler';
-                logMessage("❌ Telegram-Fehler für Ticket $ticketNumber (Code $code): $desc");
-                // 429 = Rate-Limit, 5xx = Stoerung bei Telegram. Beides geht vorbei.
-                $transient = ($code === 429 || $code >= 500);
-                if ($code === 429) {
-                    $wait = (int)($json['parameters']['retry_after'] ?? 5);
-                    logMessage("⏳ Rate-Limit erreicht, Telegram bittet um $wait Sekunden Pause.");
-                }
-            } else {
-                logMessage("✅ Telegram gesendet für Ticket #$ticketNumber (ID $ticketId), msg_id: " . $json['result']['message_id']);
+        // Ab hier ist die Nachricht NICHT zugestellt. Grundsatz: die ID rueckt
+        // nur weiter, wenn das Problem an dieser einen Nachricht liegt. Alles
+        // andere - Rate-Limit, Stoerung, widerrufener Token, Bot aus der Gruppe
+        // geworfen, falsche Chat-ID, Proxy-Fehlerseite - haelt den Lauf an und
+        // wird im naechsten Lauf erneut versucht. Telegram ist der Alarmkanal;
+        // faellt er aus, darf das nicht zum stillen Verlust aller Tickets fuehren.
+        $code = $r['code'];
+        if ($code === 400) {
+            // Immer noch 400 nach Klartext-Fallback, oder ein 400, das nichts
+            // mit der Nachricht zu tun hat ('chat not found' ist Konfiguration).
+            if (stripos($r['desc'], 'chat not found') === false && stripos($r['desc'], 'chat_id') === false) {
+                logMessage("❌ Ticket $ticketNumber nicht zustellbar (400: {$r['desc']}), wird uebersprungen.");
+                file_put_contents($lastIdFile, $ticketId, LOCK_EX);
+                continue;
             }
         }
-
-        if ($transient) {
-            logMessage("↩️ Lauf beendet. Ticket-ID $ticketId wird im naechsten Lauf erneut versucht.");
-            break;
+        if ($code === 429) {
+            logMessage("⏳ Rate-Limit (429): {$r['desc']}. Lauf beendet, Ticket $ticketNumber folgt im naechsten Lauf.");
+        } elseif ($code === 401 || $code === 403 || $code === 400) {
+            logMessage("🚨 KONFIGURATIONSFEHLER ($code): {$r['desc']} - Token, Chat-ID oder Gruppenmitgliedschaft pruefen! Lauf beendet, nichts wird uebersprungen.");
+        } elseif ($code >= 500) {
+            logMessage("❌ Telegram-Stoerung ($code): {$r['desc']}. Lauf beendet, Ticket $ticketNumber folgt im naechsten Lauf.");
+        } else {
+            logMessage("❌ Keine brauchbare Antwort von Telegram ({$r['desc']}). Lauf beendet, Ticket $ticketNumber folgt im naechsten Lauf.");
         }
-
-        // Weiterruecken bei Erfolg und bei dauerhaften Fehlern. Wuerde auch ein
-        // dauerhaft unzustellbares Ticket die ID blockieren, stuende die gesamte
-        // Warteschlange still.
-        file_put_contents($lastIdFile, $ticketId, LOCK_EX);
+        break;
     }
 } else {
     logMessage("ℹ️ Keine neuen Tickets gefunden (ab ID $last_id).");
