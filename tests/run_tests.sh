@@ -26,7 +26,7 @@ $c["telegram_chat_id"] = "-100999";
 file_put_contents($argv[2] . "/ticketbot_config.php", "<?php\nreturn " . var_export($c, true) . ";\n");
 ' "$REAL_CONFIG" "$T"
 # Script + Test-Config zusammen in ein Testverzeichnis, weil __DIR__ die Config bestimmt
-cp "$HERE/telegram_notify.php" "$T/"
+cp "$HERE/telegram_notify.php" "$HERE/lib.php" "$T/"
 MAXID=$(php -r '$c=require $argv[1]; $m=new mysqli($c["db_host"],$c["db_user"],$c["db_pass"],$c["db_name"]); echo $m->query("SELECT MAX(ticket_id) m FROM ".($c["db_prefix"]??"ost_")."ticket")->fetch_assoc()["m"];' "$REAL_CONFIG")
 
 PASS=0; FAIL=0
