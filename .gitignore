@@ -1,0 +1,6 @@
+# Echte Zugangsdaten - niemals committen!
+ticketbot_config.php
+
+# Laufzeit
+*.log
+last_ticket_id.txt

@@ -1,0 +1,14 @@
+# osTicket Telegram-Benachrichtigungsbot
+#
+# Installation:
+#   crontab -u www-data -e
+# und die folgende Zeile eintragen (ohne das fuehrende '#'):
+#
+# */1 * * * * /usr/bin/php /opt/ticketbot/telegram_notify.php
+#
+# Laeuft bewusst als www-data, nicht als root:
+#   - ticketbot_config.php ist root:www-data 640, www-data darf lesen
+#   - die State-Datei muss www-data gehoeren
+#
+# Der osTicket-eigene Cron laeuft daneben unveraendert weiter:
+# */3 * * * * /usr/bin/php /var/www/osTicket/upload/api/cron.php

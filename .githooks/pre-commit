@@ -1,0 +1,50 @@
+#!/bin/bash
+# Schutz gegen versehentlich committete Zugangsdaten.
+# Aktivierung (einmalig nach dem Clone):  git config core.hooksPath .githooks
+#
+# Dieses Repo ist oeffentlich. Was einmal in der History steht, ist dauerhaft
+# oeffentlich - auch wenn es im naechsten Commit wieder geloescht wird.
+
+fail=0
+red() { printf '\033[31m%s\033[0m\n' "$1"; }
+
+# 1) Die echte Config darf niemals rein
+if git diff --cached --name-only | grep -qx 'ticketbot_config.php'; then
+    red "BLOCKIERT: ticketbot_config.php enthaelt echte Zugangsdaten."
+    red "           Nur config.example.php gehoert ins Repo."
+    fail=1
+fi
+
+# 2) Inhalt der gestageten Dateien auf Geheimnis-Muster pruefen
+for f in $(git diff --cached --name-only --diff-filter=ACM); do
+    [ -f "$f" ] || continue
+    content=$(git show ":$f" 2>/dev/null) || continue
+
+    # -e ist noetig, weil Muster mit '-' beginnen koennen
+    check() {
+        if printf '%s' "$content" | grep -qEi -e "$1"; then
+            red "BLOCKIERT: $f enthaelt $2"
+            fail=1
+        fi
+    }
+
+    check '[0-9]{8,10}:[A-Za-z0-9_-]{35}' "einen echten Telegram-Bot-Token"
+    check '\-100[0-9]{10,}'               "eine echte Telegram-Chat-ID"
+    check 'izrd\.(eu|de)'                 "einen internen Hostnamen"
+
+    # db_pass: Wert extrahieren und gegen die erlaubten Platzhalter pruefen
+    pass=$(printf '%s' "$content" \
+        | grep -oE "'db_pass'[[:space:]]*=>[[:space:]]*'[^']*'" \
+        | sed -E "s/.*=>[[:space:]]*'([^']*)'/\1/")
+    if [ -n "$pass" ] && ! printf '%s' "$pass" | grep -qE '^(DEIN_|DEINE_|CHANGE|XXX|$)'; then
+        red "BLOCKIERT: $f enthaelt ein echtes DB-Passwort"
+        fail=1
+    fi
+done
+
+if [ "$fail" -ne 0 ]; then
+    red ""
+    red "Commit abgebrochen. Im Notfall bewusst umgehen mit: git commit --no-verify"
+    exit 1
+fi
+exit 0
