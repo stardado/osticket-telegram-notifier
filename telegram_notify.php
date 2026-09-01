@@ -48,8 +48,8 @@ function cleanAndEscape($text) {
         '{' => '\{',
         '}' => '\}',
         '.' => '\.',
-        '!' => '\!'
-        // '-' wird nicht escaped
+        '!' => '\!',
+        '-' => '\-'
     ];
     return strtr($text, $replacements);
 }
@@ -89,13 +89,13 @@ if ($result->num_rows > 0) {
 
         // Datum formatiert (dd.mm.yyyy HH:MM)
         $dt = new DateTime($row['created'] ?? 'now');
-        $created = $dt->format('d.m.Y H:i');
+        $created = cleanAndEscape($dt->format('d.m.Y H:i'));
 
         $link = $ticketBaseURL . $ticketId;
 
         // Nachricht vorbereiten
-                $message = "📬 [Neues Ticket eingegangen!]($link)\n"
-                 . "🆔 [Ticket-ID: #$ticketNumber]($link)\n\n"
+        $message = "📬 [Neues Ticket eingegangen\\!]($link)\n"
+                 . "🆔 [Ticket\\-ID: \\#$ticketNumber]($link)\n\n"
 		 . "📝 Betreff: $subject\n\n"
                  . "👤 Von: $name 🕒 Zeit: $created";
 
@@ -105,7 +105,7 @@ if ($result->num_rows > 0) {
         $data = [
             'chat_id' => $chatId,
             'text' => $message,
-            'parse_mode' => 'Markdown',
+            'parse_mode' => 'MarkdownV2',
             'disable_web_page_preview' => true
         ];
 
