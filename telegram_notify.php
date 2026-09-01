@@ -118,19 +118,38 @@ if ($result->num_rows > 0) {
         $error = curl_error($ch);
         curl_close($ch);
 
+        // Voruebergehende Stoerung? Dann darf die ID nicht weiterruecken.
+        $transient = false;
+
         if ($response === false || !empty($error)) {
             logMessage("❌ cURL-Fehler bei Telegram für Ticket $ticketNumber: $error");
+            $transient = true;
         } else {
             $json = json_decode($response, true);
             if (!$json || !isset($json['ok']) || $json['ok'] !== true) {
+                $code = (int)($json['error_code'] ?? 0);
                 $desc = $json['description'] ?? 'Unbekannter Fehler';
-                logMessage("❌ Telegram-Fehler für Ticket $ticketNumber: $desc");
+                logMessage("❌ Telegram-Fehler für Ticket $ticketNumber (Code $code): $desc");
+                // 429 = Rate-Limit, 5xx = Stoerung bei Telegram. Beides geht vorbei.
+                $transient = ($code === 429 || $code >= 500);
+                if ($code === 429) {
+                    $wait = (int)($json['parameters']['retry_after'] ?? 5);
+                    logMessage("⏳ Rate-Limit erreicht, Telegram bittet um $wait Sekunden Pause.");
+                }
             } else {
                 logMessage("✅ Telegram gesendet für Ticket #$ticketNumber (ID $ticketId), msg_id: " . $json['result']['message_id']);
             }
         }
 
-        file_put_contents($lastIdFile, $ticketId);
+        if ($transient) {
+            logMessage("↩️ Lauf beendet. Ticket-ID $ticketId wird im naechsten Lauf erneut versucht.");
+            break;
+        }
+
+        // Weiterruecken bei Erfolg und bei dauerhaften Fehlern. Wuerde auch ein
+        // dauerhaft unzustellbares Ticket die ID blockieren, stuende die gesamte
+        // Warteschlange still.
+        file_put_contents($lastIdFile, $ticketId, LOCK_EX);
     }
 } else {
     logMessage("ℹ️ Keine neuen Tickets gefunden (ab ID $last_id).");
