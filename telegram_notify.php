@@ -43,7 +43,7 @@ $lastIdFile = "$stateDir/last_ticket_id.txt";
 // Sperre gegen parallele Laeufe. Cron startet jede Minute; ein Lauf mit
 // Rueckstand dauert laenger. Ohne Sperre senden mehrere Prozesse dieselben
 // Tickets mehrfach - am 01.09.2026 bis zu 4x pro Ticket.
-$lock = tb_lock($stateDir, 'ticketbot');
+$lock = tb_lock($config, 'ticketbot');
 $conn = tb_db($config);
 
 // letzte Ticket-ID laden
@@ -74,12 +74,14 @@ $sql = "SELECT T.ticket_id, T.number, U.name, C.subject, T.created
 $result = $conn->query($sql);
 if ($result === false) {
     tb_log("❌ Fehler bei DB-Abfrage: " . $conn->error);
+    tb_alert($config, 'notify:query', "Fehler bei DB-Abfrage: " . $conn->error);
     $conn->close();
     exit(1);
 }
 
 if ($result->num_rows === 0) {
     tb_log("ℹ️ Keine neuen Tickets gefunden (ab ID $last_id).");
+    tb_alerts_resolve($config, 'notify:');
     $conn->close();
     exit(0);
 }
@@ -158,6 +160,7 @@ while ($row = $result->fetch_assoc()) {
     if ($code === 400 && stripos($r['desc'], 'chat not found') === false && stripos($r['desc'], 'chat_id') === false) {
         // Immer noch 400 nach Klartext-Fallback: liegt an dieser Nachricht.
         tb_log("❌ Ticket $rawNumber nicht zustellbar (400: {$r['desc']}), wird uebersprungen.");
+        tb_alert($config, "notify:unzustellbar:$ticketId", "Ticket #$rawNumber (ID $ticketId) konnte nicht gemeldet werden und wurde uebersprungen.\n400: {$r['desc']}\n$link", 86400);
         tb_write_state($lastIdFile, $ticketId);
         continue;
     }
@@ -165,12 +168,18 @@ while ($row = $result->fetch_assoc()) {
         tb_log("⏳ Rate-Limit (429): {$r['desc']}. Lauf beendet, Ticket $rawNumber folgt im naechsten Lauf.");
     } elseif ($code === 401 || $code === 403 || $code === 400) {
         tb_log("🚨 KONFIGURATIONSFEHLER ($code): {$r['desc']} - Token, Chat-ID oder Gruppenmitgliedschaft pruefen! Lauf beendet, nichts wird uebersprungen.");
+        // Kommt bei 401/403 vermutlich nicht an - der Versuch kostet nichts,
+        // und bei einer falschen Chat-ID mit abweichendem alert_chat_id schon.
+        tb_alert($config, 'notify:telegram-config', "Telegram meldet $code: {$r['desc']}\nToken, Chat-ID oder Gruppenmitgliedschaft pruefen. Es werden keine Tickets uebersprungen.");
     } elseif ($code >= 500) {
         tb_log("❌ Telegram-Stoerung ($code): {$r['desc']}. Lauf beendet, Ticket $rawNumber folgt im naechsten Lauf.");
     } else {
         tb_log("❌ Keine brauchbare Antwort von Telegram ({$r['desc']}). Lauf beendet, Ticket $rawNumber folgt im naechsten Lauf.");
     }
-    break;
+    $conn->close();
+    exit(0);
 }
 
+// Alle neuen Tickets zugestellt: eventuell offene Alarme aufloesen.
+tb_alerts_resolve($config, 'notify:');
 $conn->close();

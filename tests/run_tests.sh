@@ -103,6 +103,9 @@ php -S 127.0.0.1:8089 "$HERE/tests/mock_telegram.php" >"$T/mock.out" 2>&1 & MOCK
 echo "[11] Falsches DB-Passwort"
 reset ok; sed -i "s/'db_pass' => '[^']*'/'db_pass' => 'falsch'/" "$T/ticketbot_config.php"; run
 check "Exit 1 und Meldung im Log, keine Exception"      '[ "$(cat "$T/exit")" = 1 ] && grep -q "DB-Verbindung" "$T/bot.log" && ! grep -q "Uncaught" "$T/stderr"'
+check "Alarm per Telegram gesendet"                     'grep -q "Ticketbot-Fehler \[notify:db\]" "$MOCK_LOG"'
+run
+check "zweiter Lauf: kein zweiter Alarm (Cooldown)"     '[ "$(grep -c "Ticketbot-Fehler" "$MOCK_LOG")" = 1 ]'
 php -r '$c=require $argv[1]; $r=require $argv[2]; $c["db_pass"]=$r["db_pass"]; file_put_contents($argv[1],"<?php\nreturn ".var_export($c,true).";\n");' "$T/ticketbot_config.php" "$REAL_CONFIG"
 
 echo "[12] Fehlender Config-Schluessel"
@@ -157,6 +160,23 @@ check "Exit 1, Offset unveraendert"                     '[ "$(cat "$T/exit")" = 
 echo "[22] Klick auf erlaubten Status ohne osTicket-Installation"
 reset ok; cq 508 -100999 "close:$MAXID:2"; runact
 check "klare Meldung zu osticket_dir, Exit 1"          'grep -q "osticket_dir" "$T/bot.log" && [ "$(cat "$T/exit")" = 1 ]'
+
+echo "[23] Entwarnung nach behobenem Fehler"
+reset ok; echo "$MAXID" >"$T/last_ticket_id.txt"
+printf '{"notify:db":%s}' "$(( $(date +%s) - 120 ))" >"$T/alerts.json"; run
+check "Entwarnung gesendet, Alarm geloescht"            'grep -q "wieder in Ordnung: notify:db" "$MOCK_LOG" && [ "$(cat "$T/alerts.json")" = "{}" ]'
+
+echo "[24] Haengender Prozess"
+reset ok; rm -f "$T/ticketbot.skips"
+flock -x "$T/ticketbot.lock" -c 'sleep 4' & FL=$!; sleep 0.3
+for i in 1 2 3 4 5; do run; done; wait $FL
+check "nach 5 Skips ein Alarm, nicht fuenf"             '[ "$(grep -c "Ticketbot-Fehler \[ticketbot:haengt\]" "$MOCK_LOG")" = 1 ]'
+run
+check "Skip-Zaehler nach freiem Lauf zurueckgesetzt"    '[ ! -e "$T/ticketbot.skips" ]'
+
+echo "[25] Alarm bei getUpdates-Konflikt (actions)"
+reset 409; cq 600 -100999 "noop"; runact
+check "409 alarmiert"                                   'grep -q "Ticketbot-Fehler \[actions:getupdates\]" "$MOCK_LOG"'
 
 echo
 echo "Ergebnis: $PASS bestanden, $FAIL fehlgeschlagen"

@@ -41,7 +41,7 @@ foreach ($actions as $a) {
     $allowedStatus[(int)$a['status_id']] = $a['label'];
 }
 
-$lock = tb_lock($stateDir, 'actions');
+$lock = tb_lock($config, 'actions');
 
 // Nur callback_query anfordern: Gruppennachrichten sind fuer dieses Script
 // uninteressant, und so bleibt der Privacy-Mode des Bots ohne Bedeutung.
@@ -59,9 +59,13 @@ if (!$r['ok']) {
     } else {
         tb_log("❌ [actions] getUpdates fehlgeschlagen ({$r['code']}): {$r['desc']}");
     }
+    if ($r['code'] === 409) {
+        tb_alert($config, 'actions:getupdates', "getUpdates meldet 409-Konflikt: {$r['desc']}\nIst ein Webhook gesetzt oder laeuft getUpdates noch woanders? Button-Klicks werden nicht verarbeitet.");
+    }
     exit(1);
 }
 
+tb_alerts_resolve($config, 'actions:');
 $updates = is_array($r['result']) ? $r['result'] : [];
 if (!$updates) {
     exit(0);
@@ -131,6 +135,7 @@ foreach ($updates as $u) {
         $tbApiInc = rtrim($config['osticket_dir'], '/') . '/api/api.inc.php';
         if (!is_file($tbApiInc)) {
             tb_log("❌ [actions] osticket_dir '{$config['osticket_dir']}' enthaelt kein osTicket (api/api.inc.php fehlt).");
+            tb_alert($config, 'actions:osticket', "osticket_dir '{$config['osticket_dir']}' enthaelt kein osTicket. Button-Klicks koennen nicht verarbeitet werden.");
             exit(1);
         }
         $tbCwd = getcwd();

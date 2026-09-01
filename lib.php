@@ -25,6 +25,9 @@ function tb_load_config(array $required): array {
         $msg = "Konfiguration unvollstaendig, fehlende Schluessel: " . implode(', ', $missing);
         tb_log("❌ $msg");
         fwrite(STDERR, "$msg\n");
+        $c['api_base']  = rtrim($c['api_base'] ?? 'https://api.telegram.org', '/');
+        $c['state_dir'] = rtrim($c['state_dir'] ?? '/var/lib/ticketbot', '/');
+        tb_alert($c, 'config', $msg);
         exit(1);
     }
     $prefix = $c['db_prefix'] ?? 'ost_';
@@ -50,20 +53,37 @@ function tb_log(string $text): void {
  * Exklusive Sperre gegen parallele Cron-Laeufe. Gibt das Handle zurueck; es
  * muss bis zum Ende des Laufs leben, sonst faellt die Sperre.
  */
-function tb_lock(string $stateDir, string $name) {
+function tb_lock(array $c, string $name) {
+    $stateDir = $c['state_dir'];
     if (!is_dir($stateDir) || !is_writable($stateDir)) {
-        tb_log("❌ State-Verzeichnis $stateDir fehlt oder ist nicht beschreibbar. Anlegen mit: install -d -o www-data -g www-data $stateDir");
+        $msg = "State-Verzeichnis $stateDir fehlt oder ist nicht beschreibbar. Anlegen mit: install -d -o www-data -g www-data $stateDir";
+        tb_log("❌ $msg");
+        // alerts.json liegt im selben Verzeichnis, Cooldown greift hier nicht -
+        // deshalb ohne Cooldown-Zustand, aber der Fall ist nach Installation selten.
+        tb_alert($c, "$name:statedir", $msg);
         exit(1);
     }
     $lockFile = "$stateDir/$name.lock";
     $lock = fopen($lockFile, 'c');
     if ($lock === false) {
         tb_log("❌ Sperrdatei $lockFile kann nicht geoeffnet werden.");
+        tb_alert($c, "$name:lockfile", "Sperrdatei $lockFile kann nicht geoeffnet werden.");
         exit(1);
     }
+    $skipsFile = "$stateDir/$name.skips";
     if (!flock($lock, LOCK_EX | LOCK_NB)) {
-        tb_log("⏭️ Ein anderer Lauf ($name) ist noch aktiv, dieser Lauf wird uebersprungen.");
+        // Ein einzelner Skip ist normal (Rueckstand wird abgearbeitet). Fuenf in
+        // Folge bedeuten: ein Prozess haengt seit fuenf Minuten und haelt die Sperre.
+        $skips = tb_read_state($skipsFile) + 1;
+        tb_write_state($skipsFile, $skips);
+        tb_log("⏭️ Ein anderer Lauf ($name) ist noch aktiv, dieser Lauf wird uebersprungen ($skips. Mal in Folge).");
+        if ($skips >= 5) {
+            tb_alert($c, "$name:haengt", "Seit $skips Minuten haelt ein anderer Prozess die Sperre $lockFile. Haengt ein Lauf? Pruefen mit: ps aux | grep telegram_");
+        }
         exit(0);
+    }
+    if (is_file($skipsFile)) {
+        @unlink($skipsFile);
     }
     return $lock;
 }
@@ -139,6 +159,72 @@ function tb_api(array $config, string $method, array $data): array {
     ];
 }
 
+/**
+ * Fehler des Bots selbst per Telegram melden.
+ *
+ * Pro Schluessel geht hoechstens ein Alarm je Cooldown raus - der Cron laeuft
+ * minuetlich, ohne Drossel waere die Gruppe bei einem DB-Ausfall in Minuten
+ * voll. Sobald ein Lauf wieder sauber durchlaeuft, gibt tb_alerts_resolve()
+ * Entwarnung. Zustand liegt in alerts.json im State-Verzeichnis.
+ *
+ * Ist Telegram selbst das Problem (Token widerrufen, Bot aus der Gruppe),
+ * kommt der Alarm natuerlich nicht an; dann bleibt das Log.
+ */
+function tb_alert(array $c, string $key, string $text, int $cooldown = 3600): void {
+    if (empty($c['telegram_token']) || empty($c['telegram_chat_id'])) {
+        return;
+    }
+    $file   = ($c['state_dir'] ?? '/var/lib/ticketbot') . '/alerts.json';
+    $active = tb_alerts_read($file);
+    if (isset($active[$key]) && time() - $active[$key] < $cooldown) {
+        return;
+    }
+    $r = tb_api($c, 'sendMessage', [
+        'chat_id'                  => $c['alert_chat_id'] ?? $c['telegram_chat_id'],
+        'text'                     => "🚨 Ticketbot-Fehler [$key]\n$text\n\nHost: " . gethostname() . ", " . date('d.m.Y H:i'),
+        'disable_web_page_preview' => true,
+    ]);
+    if ($r['ok']) {
+        $active[$key] = time();
+        tb_alerts_write($file, $active);
+    } else {
+        tb_log("⚠️ Alarm [$key] konnte nicht per Telegram gemeldet werden ({$r['code']}): {$r['desc']}");
+    }
+}
+
+/** Entwarnung fuer alle aktiven Alarme, deren Schluessel mit $prefix beginnt. */
+function tb_alerts_resolve(array $c, string $prefix): void {
+    $file   = ($c['state_dir'] ?? '/var/lib/ticketbot') . '/alerts.json';
+    $active = tb_alerts_read($file);
+    $done   = array_filter(array_keys($active), fn($k) => str_starts_with($k, $prefix));
+    if (!$done) {
+        return;
+    }
+    $r = tb_api($c, 'sendMessage', [
+        'chat_id' => $c['alert_chat_id'] ?? $c['telegram_chat_id'],
+        'text'    => "✅ Ticketbot wieder in Ordnung: " . implode(', ', $done) . "\nHost: " . gethostname() . ", " . date('d.m.Y H:i'),
+    ]);
+    if ($r['ok']) {
+        foreach ($done as $k) {
+            unset($active[$k]);
+        }
+        tb_alerts_write($file, $active);
+        tb_log("✅ Entwarnung gesendet fuer: " . implode(', ', $done));
+    }
+}
+
+function tb_alerts_read(string $file): array {
+    $j = is_file($file) ? json_decode((string)file_get_contents($file), true) : null;
+    return is_array($j) ? $j : [];
+}
+
+function tb_alerts_write(string $file, array $active): void {
+    $tmp = "$file.tmp";
+    if (file_put_contents($tmp, json_encode($active, JSON_FORCE_OBJECT), LOCK_EX) !== false) {
+        rename($tmp, $file);
+    }
+}
+
 /** Verbindung zur osTicket-Datenbank, Fehler landen im Log statt als Exception. */
 function tb_db(array $c): mysqli {
     // Seit PHP 8.1 wirft mysqli standardmaessig Exceptions; connect_error
@@ -152,6 +238,7 @@ function tb_db(array $c): mysqli {
         return $conn;
     } catch (Throwable $e) {
         tb_log("❌ DB-Verbindung fehlgeschlagen: " . $e->getMessage());
+        tb_alert($c, 'notify:db', "DB-Verbindung fehlgeschlagen: " . $e->getMessage());
         exit(1);
     }
 }

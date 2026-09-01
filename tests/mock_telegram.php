@@ -44,6 +44,11 @@ if ($method === 'getUpdates') {
         echo json_encode(['ok' => false, 'error_code' => 401, 'description' => 'Unauthorized']);
         exit;
     }
+    if ($scenario === '409') {
+        http_response_code(409);
+        echo json_encode(['ok' => false, 'error_code' => 409, 'description' => 'Conflict: terminated by other getUpdates request']);
+        exit;
+    }
     $all    = json_decode(@file_get_contents(getenv('MOCK_UPDATES') ?: '/tmp/mock_updates.json') ?: '[]', true) ?: [];
     $offset = (int)($_POST['offset'] ?? 0);
     echo json_encode(['ok' => true, 'result' => array_values(array_filter($all, fn($u) => $u['update_id'] >= $offset))]);

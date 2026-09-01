@@ -25,6 +25,12 @@ return [
     // Tabellenpraefix, entspricht TABLE_PREFIX in include/ost-config.php
     'db_prefix' => 'ost_',
 
+    // Fehler des Bots selbst (DB weg, Prozess haengt, Ticket unzustellbar)
+    // werden per Telegram gemeldet - pro Fehlerart hoechstens einmal je Stunde,
+    // mit Entwarnung, sobald es wieder laeuft. Standard ist die Ticket-Gruppe;
+    // hier kann ein anderer Chat (z.B. ein Admin-Chat) eingetragen werden.
+    // 'alert_chat_id' => '-100XXXXXXXXXX',
+
     // Schreibt den vollstaendigen Nachrichtentext jeder Meldung ins Log.
     // Nur zur Fehlersuche - laesst das Log sonst schnell auf Hunderte MB wachsen.
     'debug' => false,
