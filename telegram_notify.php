@@ -22,10 +22,15 @@ function logMessage($text) {
 
 // Markdown escapen (ohne Bindestriche escapen)
 function cleanAndEscape($text) {
+    // Ungueltige Byte-Sequenzen verwerfen. utf8_encode() deutete den Text
+    // faelschlich als Latin-1 und ist seit PHP 8.2 ausserdem deprecated.
     if (!mb_check_encoding($text, 'UTF-8')) {
-        $text = utf8_encode($text);
+        $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
     }
-    $text = preg_replace('/[[:^print:]]/', '', $text);
+    // Nur Steuer- und Formatzeichen entfernen.
+    // Der /u-Modifier ist zwingend: ohne ihn arbeitet die Zeichenklasse
+    // byteweise und loescht jedes Multibyte-Zeichen - Umlaute inklusive.
+    $text = preg_replace('/\p{C}/u', '', $text);
     $replacements = [
         '_' => '\_',
         '*' => '\*',
