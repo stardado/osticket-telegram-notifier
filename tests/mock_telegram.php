@@ -34,6 +34,26 @@ $msgId = (int)(@file_get_contents("$logFile.counter") ?: 0) + 1;
 file_put_contents("$logFile.counter", $msgId);
 
 header('Content-Type: application/json');
+
+// Methoden fuer telegram_actions.php. getUpdates liefert die Eintraege aus der
+// Datei MOCK_UPDATES (JSON-Array), gefiltert nach dem uebergebenen offset.
+$method = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
+if ($method === 'getUpdates') {
+    if ($scenario === '401') {
+        http_response_code(401);
+        echo json_encode(['ok' => false, 'error_code' => 401, 'description' => 'Unauthorized']);
+        exit;
+    }
+    $all    = json_decode(@file_get_contents(getenv('MOCK_UPDATES') ?: '/tmp/mock_updates.json') ?: '[]', true) ?: [];
+    $offset = (int)($_POST['offset'] ?? 0);
+    echo json_encode(['ok' => true, 'result' => array_values(array_filter($all, fn($u) => $u['update_id'] >= $offset))]);
+    exit;
+}
+if ($method === 'answerCallbackQuery' || $method === 'editMessageReplyMarkup') {
+    echo json_encode(['ok' => true, 'result' => true]);
+    exit;
+}
+
 switch ($scenario) {
     case '429':
         http_response_code(429);

@@ -10,7 +10,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"
 trap 'kill $MOCK 2>/dev/null; rm -rf "$T"' EXIT
 
-export MOCK_SCENARIO_FILE="$T/scenario" MOCK_LOG="$T/requests.log"
+export MOCK_SCENARIO_FILE="$T/scenario" MOCK_LOG="$T/requests.log" MOCK_UPDATES="$T/updates.json"
 php -S 127.0.0.1:8089 "$HERE/tests/mock_telegram.php" >"$T/mock.out" 2>&1 &
 MOCK=$!
 sleep 0.5
@@ -23,14 +23,20 @@ $c["state_dir"] = $argv[2];
 $c["log_file"]  = $argv[2] . "/bot.log";
 $c["telegram_token"] = "000:TESTTOKEN";
 $c["telegram_chat_id"] = "-100999";
+$c["actions"] = [["label"=>"Geloest","status_id"=>2],["label"=>"Geschlossen","status_id"=>3]];
+$c["osticket_dir"] = $argv[2] . "/kein-osticket";   // darf in diesen Tests nie geladen werden
 file_put_contents($argv[2] . "/ticketbot_config.php", "<?php\nreturn " . var_export($c, true) . ";\n");
 ' "$REAL_CONFIG" "$T"
 # Script + Test-Config zusammen in ein Testverzeichnis, weil __DIR__ die Config bestimmt
-cp "$HERE/telegram_notify.php" "$HERE/lib.php" "$T/"
+cp "$HERE/telegram_notify.php" "$HERE/telegram_actions.php" "$HERE/lib.php" "$T/"
 MAXID=$(php -r '$c=require $argv[1]; $m=new mysqli($c["db_host"],$c["db_user"],$c["db_pass"],$c["db_name"]); echo $m->query("SELECT MAX(ticket_id) m FROM ".($c["db_prefix"]??"ost_")."ticket")->fetch_assoc()["m"];' "$REAL_CONFIG")
 
 PASS=0; FAIL=0
 run()   { php "$T/telegram_notify.php" >"$T/stdout" 2>"$T/stderr"; echo $? >"$T/exit"; }
+runact(){ php "$T/telegram_actions.php" >"$T/stdout" 2>"$T/stderr"; echo $? >"$T/exit"; }
+offset(){ cat "$T/update_offset.txt" 2>/dev/null || echo 0; }
+cq()    { # update_id chat_id data
+  printf '[{"update_id":%s,"callback_query":{"id":"cq%s","from":{"id":42,"first_name":"Testa","username":"testa"},"message":{"message_id":7,"chat":{"id":%s}},"data":"%s"}}]' "$1" "$1" "$2" "$3" >"$T/updates.json"; }
 state() { cat "$T/last_ticket_id.txt" 2>/dev/null || echo "(keine)"; }
 reqs()  { [ -f "$MOCK_LOG" ] && wc -l <"$MOCK_LOG" || echo 0; }
 reset() { echo "$1" >"$T/scenario"; rm -f "$MOCK_LOG" "$MOCK_LOG.counter"; : >"$T/bot.log"; }
@@ -125,6 +131,32 @@ echo "[16] State-Datei wird atomar geschrieben"
 reset ok; echo $((MAXID-1)) >"$T/last_ticket_id.txt"; run
 check "keine .tmp-Datei zurueckgelassen"                '[ ! -e "$T/last_ticket_id.txt.tmp" ]'
 check "Inhalt korrekt"                                  '[ "$(state)" = "$MAXID" ]'
+
+echo "[17] Buttons unter der Nachricht"
+reset ok; echo $((MAXID-1)) >"$T/last_ticket_id.txt"; run
+check "reply_markup mit close:<id>:2 und :3"           'grep -q "close:$MAXID:2" "$MOCK_LOG" && grep -q "close:$MAXID:3" "$MOCK_LOG"'
+
+echo "[18] Klick aus fremdem Chat"
+reset ok; rm -f "$T/update_offset.txt"; cq 500 -100777 "close:$MAXID:2"; runact
+check "abgelehnt, osTicket nicht geladen, Offset 501"  'grep -q "fremdem Chat" "$T/bot.log" && [ "$(offset)" = 501 ] && [ "$(cat "$T/exit")" = 0 ]'
+
+echo "[19] noop-Klick und unbekannte Aktion"
+reset ok; cq 502 -100999 "noop"; runact
+check "noop still verarbeitet, Offset 503"             '[ "$(offset)" = 503 ] && ! grep -q "❌" "$T/bot.log"'
+cq 503 -100999 "irgendwas"; runact
+check "unbekannte Aktion geloggt, Offset 504"          'grep -q "Unbekannte Aktion" "$T/bot.log" && [ "$(offset)" = 504 ]'
+
+echo "[20] Nicht konfigurierter Status"
+reset ok; cq 505 -100999 "close:$MAXID:5"; runact
+check "Status 5 abgelehnt ohne osTicket-Zugriff"       'grep -q "nicht konfiguriert" "$T/bot.log" && [ "$(offset)" = 506 ]'
+
+echo "[21] getUpdates mit widerrufenem Token"
+reset 401; cq 507 -100999 "noop"; runact
+check "Exit 1, Offset unveraendert"                     '[ "$(cat "$T/exit")" = 1 ] && [ "$(offset)" = 506 ] && grep -q "401" "$T/bot.log"'
+
+echo "[22] Klick auf erlaubten Status ohne osTicket-Installation"
+reset ok; cq 508 -100999 "close:$MAXID:2"; runact
+check "klare Meldung zu osticket_dir, Exit 1"          'grep -q "osticket_dir" "$T/bot.log" && [ "$(cat "$T/exit")" = 1 ]'
 
 echo
 echo "Ergebnis: $PASS bestanden, $FAIL fehlgeschlagen"

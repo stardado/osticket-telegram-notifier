@@ -27,6 +27,17 @@ $prefix   = $config['db_prefix'];
 $debug    = $config['debug'];
 $stateDir = $config['state_dir'];
 $maxPerRun  = 20;   // Telegram drosselt Gruppen bei etwa 20 Nachrichten/Minute
+
+// Buttons unter jeder Nachricht, ausgewertet von telegram_actions.php.
+// callback_data ist auf 64 Bytes begrenzt; 'close:<ticket_id>:<status_id>' passt.
+$actions = $config['actions'] ?? [];
+$keyboard = function (int $ticketId) use ($actions): ?string {
+    if (!$actions) {
+        return null;
+    }
+    $row = array_map(fn($a) => ['text' => $a['label'], 'callback_data' => "close:$ticketId:{$a['status_id']}"], $actions);
+    return json_encode(['inline_keyboard' => [$row]], JSON_UNESCAPED_UNICODE);
+};
 $lastIdFile = "$stateDir/last_ticket_id.txt";
 
 // Sperre gegen parallele Laeufe. Cron startet jede Minute; ein Lauf mit
@@ -109,6 +120,9 @@ while ($row = $result->fetch_assoc()) {
         'parse_mode'               => 'MarkdownV2',
         'disable_web_page_preview' => true,
     ];
+    if ($kb = $keyboard($ticketId)) {
+        $data['reply_markup'] = $kb;
+    }
     $r = tb_api($config, 'sendMessage', $data);
 
     // MarkdownV2 ist fragil. Weist Telegram die Formatierung zurueck, geht
@@ -122,6 +136,9 @@ while ($row = $result->fetch_assoc()) {
                                         . "\n\n👤 Von: $rawName 🕒 Zeit: $rawCreated\n$link",
             'disable_web_page_preview' => true,
         ];
+        if ($kb) {
+            $plain['reply_markup'] = $kb;
+        }
         $r = tb_api($config, 'sendMessage', $plain);
     }
 

@@ -26,6 +26,35 @@ Eine Nachricht sieht so aus:
 
 Titel und Ticket-ID sind mit dem Ticket im Agenten-Panel verlinkt.
 
+## Tickets aus Telegram heraus schliessen
+
+Optional erscheinen unter jeder Benachrichtigung Buttons, zum Beispiel
+„✅ Gelöst" und „🔒 Geschlossen". Ein Klick setzt den Ticketstatus - ohne das
+Ticket im Agenten-Panel oeffnen zu muessen.
+
+- Der Status wird ueber **osTickets eigene Klassen** gesetzt
+  (`Ticket::setStatus()`), nicht per SQL. Der Ereignis-Eintrag im Verlauf
+  entsteht wie bei einem Klick im Panel, Pflichtfelder und offene Aufgaben
+  werden geprueft; scheitert das, bekommt der Klickende die Begruendung
+  als Telegram-Hinweis.
+- Zusaetzlich entsteht eine **interne Notiz** („Per Telegram von … auf
+  „Gelöst" gesetzt"), fuer den Kunden unsichtbar.
+- Nach dem Statuswechsel werden die Buttons durch eine Erledigt-Zeile mit
+  Name und Uhrzeit ersetzt, damit niemand doppelt klickt.
+- **Berechtigung ist die Gruppenmitgliedschaft.** Wer in der Gruppe ist, darf
+  klicken. Klicks aus anderen Chats werden abgewiesen. Wer feinere Kontrolle
+  braucht, sollte die Gruppe entsprechend klein halten.
+
+Dafuer laeuft ein zweites Script, `telegram_actions.php`, ebenfalls minuetlich
+per Cron. Es holt die Klicks per `getUpdates` ab (nur `callback_query`, der
+Privacy-Mode des Bots spielt keine Rolle) und braucht `osticket_dir` sowie
+`actions` in der Konfiguration. Ist `actions` leer, gibt es keine Buttons und
+das Script beendet sich sofort. Ein Klick wird spaetestens nach einer Minute
+verarbeitet.
+
+Fuer den Bot darf **kein Webhook** gesetzt sein, sonst liefert `getUpdates`
+einen 409-Konflikt.
+
 ## Voraussetzungen
 
 - osTicket mit MySQL/MariaDB
@@ -59,7 +88,10 @@ Cron-Eintrag ergaenzen mit `crontab -u www-data -e`:
 
 ```cron
 */1 * * * * /usr/bin/php /opt/ticketbot/telegram_notify.php
+*/1 * * * * /usr/bin/php /opt/ticketbot/telegram_actions.php
 ```
+
+Die zweite Zeile ist nur noetig, wenn die Schliessen-Buttons genutzt werden.
 
 Der Bot laeuft bewusst als `www-data`: dieser Benutzer darf die Konfiguration
 lesen und die State-Datei schreiben. Als DB-Benutzer muss ein eigener Account
@@ -87,6 +119,13 @@ osTicket-Datenbank wird nur lesend benutzt.
 tests/run_tests.sh /opt/ticketbot/ticketbot_config.php
 ```
 
+`tests/e2e_close.sh` prueft die Schliessen-Buttons gegen die echte
+osTicket-Installation: es legt ein Testticket an (ohne Autoresponder, ohne
+Agenten-Alarm, ohne Telegram-Meldung), simuliert die Klicks, prueft Status,
+Ereignis und Notiz in der Datenbank und loescht das Ticket wieder. Weil es in
+die Produktivdatenbank schreibt, ist es bewusst nicht Teil von
+`run_tests.sh`.
+
 Abgedeckt sind unter anderem Erststart, Rate-Limit, Telegram-Stoerung,
 widerrufener Token, Bot aus der Gruppe entfernt, HTML statt JSON,
 MarkdownV2-Parsefehler mit Klartext-Fallback, haengende Verbindung, falsches
@@ -98,6 +137,8 @@ DB-Passwort, unvollstaendige Konfiguration und parallele Laeufe.
 |---|---|
 | `/var/lib/ticketbot/last_ticket_id.txt` | zuletzt gemeldete Ticket-ID |
 | `/var/lib/ticketbot/ticketbot.lock` | Sperre gegen parallele Laeufe |
+| `/var/lib/ticketbot/update_offset.txt` | zuletzt verarbeitetes Telegram-Update (Buttons) |
+| `/var/lib/ticketbot/actions.lock` | Sperre fuer `telegram_actions.php` |
 | `/var/log/ticketbot.log` | Protokoll |
 
 Die State-Datei liegt bewusst unter `/var/lib` und nicht in `/tmp`: dort ginge
