@@ -20,7 +20,24 @@
  */
 
 // Konfiguration laden
-$config = require(__DIR__ . '/ticketbot_config.php');
+$configFile = __DIR__ . '/ticketbot_config.php';
+if (!is_readable($configFile)) {
+    fwrite(STDERR, "Konfiguration $configFile fehlt oder ist nicht lesbar. Vorlage: config.example.php\n");
+    exit(1);
+}
+$config = require($configFile);
+
+// Pflichtschluessel pruefen, bevor irgendetwas anderes passiert. Ein fehlender
+// Wert wuerde sonst erst als kryptischer Telegram- oder DB-Fehler auffallen.
+$required = ['telegram_token', 'telegram_chat_id', 'db_host', 'db_user', 'db_pass', 'db_name', 'ticket_url_base'];
+$missing  = array_filter($required, fn($k) => !isset($config[$k]) || $config[$k] === '');
+$logFile  = $config['log_file'] ?? '/var/log/ticketbot.log';
+if ($missing) {
+    $msg = "Konfiguration unvollstaendig, fehlende Schluessel: " . implode(', ', $missing);
+    @file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] - ❌ $msg\n", FILE_APPEND);
+    fwrite(STDERR, "$msg\n");
+    exit(1);
+}
 
 // Konfiguration übernehmen
 $telegramToken  = $config['telegram_token'];
@@ -37,7 +54,6 @@ $maxPerRun      = 20;   // Telegram drosselt Gruppen bei etwa 20 Nachrichten/Min
 // keinen Eintrag in der Konfiguration.
 $apiBase        = rtrim($config['api_base'] ?? 'https://api.telegram.org', '/');
 $stateDir       = rtrim($config['state_dir'] ?? '/var/lib/ticketbot', '/');
-$logFile        = $config['log_file'] ?? '/var/log/ticketbot.log';
 $lastIdFile     = "$stateDir/last_ticket_id.txt";
 $lockFile       = "$stateDir/ticketbot.lock";
 
@@ -86,19 +102,33 @@ function cleanAndEscape($text) {
 // Cron startet jede Minute; ein Lauf mit Rueckstand dauert laenger als eine
 // Minute. Ohne Sperre arbeiten mehrere Prozesse dieselbe Warteschlange ab und
 // senden dieselben Tickets mehrfach - am 01.09.2026 bis zu 4x pro Ticket.
+if (!is_dir($stateDir) || !is_writable($stateDir)) {
+    logMessage("❌ State-Verzeichnis $stateDir fehlt oder ist nicht beschreibbar. Anlegen mit: install -d -o www-data -g www-data $stateDir");
+    exit(1);
+}
 $lock = fopen($lockFile, 'c');
-if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
+if ($lock === false) {
+    logMessage("❌ Sperrdatei $lockFile kann nicht geoeffnet werden.");
+    exit(1);
+}
+if (!flock($lock, LOCK_EX | LOCK_NB)) {
     logMessage("⏭️ Ein anderer Lauf ist noch aktiv, dieser Lauf wird uebersprungen.");
     exit(0);
 }
 
-// Verbindung zur Datenbank
-$conn = new mysqli($db_host, $db_user, $db_pass, $db_name);
-if ($conn->connect_error) {
-    logMessage("❌ DB-Verbindung fehlgeschlagen: " . $conn->connect_error);
+// Verbindung zur Datenbank.
+// Seit PHP 8.1 wirft mysqli standardmaessig Exceptions; connect_error wuerde
+// nie gesetzt. Ohne diesen Block stirbt der Bot bei DB-Ausfall mit einem
+// unbehandelten Fehler, der nur in der Cron-Mail landet - nicht im Log.
+try {
+    $conn = new mysqli($db_host, $db_user, $db_pass, $db_name);
+    if (!$conn->set_charset('utf8mb4')) {
+        throw new RuntimeException('set_charset utf8mb4: ' . $conn->error);
+    }
+} catch (Throwable $e) {
+    logMessage("❌ DB-Verbindung fehlgeschlagen: " . $e->getMessage());
     exit(1);
 }
-$conn->set_charset("utf8mb4");
 
 // letzte Ticket-ID laden
 $last_id = file_exists($lastIdFile) ? (int)file_get_contents($lastIdFile) : 0;
