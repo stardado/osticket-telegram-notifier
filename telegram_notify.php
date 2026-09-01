@@ -1,6 +1,6 @@
 <?php
 // Konfiguration laden
-$config = require('/usr/local/bin/ticketbot_config.php');
+$config = require(__DIR__ . '/ticketbot_config.php');
 
 // Konfiguration übernehmen
 $telegramToken  = $config['telegram_token'];
