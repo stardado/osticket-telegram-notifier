@@ -117,7 +117,7 @@ check "Lauf uebersprungen, State unveraendert"          'grep -q "anderer Lauf" 
 echo "[15] Link-URL mit Sonderzeichen"
 reset ok; echo $((MAXID-1)) >"$T/last_ticket_id.txt"
 sed -i "s|'ticket_url_base' => '[^']*'|'ticket_url_base' => 'https://x.example/t(1)/?id='|" "$T/ticketbot_config.php"; run
-check "')' im Link escaped"                            'grep -q "t(1\\\\\\\\)/" "$MOCK_LOG"'
+check "')' im Link escaped"                            'grep -qF "t(1\\\\)\\/" "$MOCK_LOG"'
 check "Nachricht zugestellt"                            '[ "$(state)" = "$MAXID" ]'
 sed -i "s|'ticket_url_base' => '[^']*'|'ticket_url_base' => 'https://ticket.example.org/scp/tickets.php?id='|" "$T/ticketbot_config.php"
 

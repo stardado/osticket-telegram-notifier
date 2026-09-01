@@ -22,6 +22,8 @@ return [
     'db_user' => 'osticket',
     'db_pass' => 'DEIN_DB_PASSWORT',
     'db_name' => 'osticket',
+    // Tabellenpraefix, entspricht TABLE_PREFIX in include/ost-config.php
+    'db_prefix' => 'ost_',
 
     // Schreibt den vollstaendigen Nachrichtentext jeder Meldung ins Log.
     // Nur zur Fehlersuche - laesst das Log sonst schnell auf Hunderte MB wachsen.

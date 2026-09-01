@@ -48,6 +48,11 @@ $db_pass        = $config['db_pass'];
 $db_name        = $config['db_name'];
 $ticketBaseURL  = $config['ticket_url_base'];
 $debug          = (bool)($config['debug'] ?? false);
+$prefix         = $config['db_prefix'] ?? 'ost_';   // TABLE_PREFIX aus ost-config.php
+if (!preg_match('/^[A-Za-z0-9_]*$/', $prefix)) {
+    fwrite(STDERR, "db_prefix darf nur Buchstaben, Ziffern und Unterstrich enthalten.\n");
+    exit(1);
+}
 $maxPerRun      = 20;   // Telegram drosselt Gruppen bei etwa 20 Nachrichten/Minute
 
 // Die folgenden Werte sind nur fuer Tests gedacht und brauchen im Regelbetrieb
@@ -193,7 +198,7 @@ $last_id = file_exists($lastIdFile) ? (int)file_get_contents($lastIdFile) : 0;
 // am 01.09.2026 nach einem Reboot passiert, als die State-Datei noch in /tmp
 // lag und mit dem Neustart verschwand.
 if ($last_id <= 0) {
-    $seed = $conn->query("SELECT MAX(ticket_id) AS m FROM ost_ticket");
+    $seed = $conn->query("SELECT MAX(ticket_id) AS m FROM {$prefix}ticket");
     $last_id = $seed ? (int)($seed->fetch_assoc()['m'] ?? 0) : 0;
     writeState($lastIdFile, $last_id);
     logMessage("🔰 Kein gueltiger Stand gefunden. Startpunkt auf hoechste Ticket-ID $last_id gesetzt, es wird nichts nachgesendet.");
@@ -203,9 +208,9 @@ if ($last_id <= 0) {
 
 // neue Tickets abfragen
 $sql = "SELECT T.ticket_id, T.number, U.name, C.subject, T.created
-        FROM ost_ticket T
-        LEFT JOIN ost_user U ON T.user_id = U.id
-        LEFT JOIN ost_ticket__cdata C ON T.ticket_id = C.ticket_id
+        FROM {$prefix}ticket T
+        LEFT JOIN {$prefix}user U ON T.user_id = U.id
+        LEFT JOIN {$prefix}ticket__cdata C ON T.ticket_id = C.ticket_id
         WHERE T.ticket_id > $last_id
         ORDER BY T.ticket_id ASC";
 
@@ -244,7 +249,7 @@ if ($result->num_rows > 0) {
         // Nachricht vorbereiten
         $message = "📬 [Neues Ticket eingegangen\\!]($mdLink)\n"
                  . "🆔 [Ticket\\-ID: \\#$ticketNumber]($mdLink)\n\n"
-		 . "📝 Betreff: $subject\n\n"
+                 . "📝 Betreff: $subject\n\n"
                  . "👤 Von: $name 🕒 Zeit: $created";
 
         if ($debug) {

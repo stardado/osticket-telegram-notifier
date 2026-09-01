@@ -76,6 +76,22 @@ Alle Werte stehen in `ticketbot_config.php`, siehe `config.example.php`.
 Der Schalter `debug` schreibt zusaetzlich den vollstaendigen Text jeder
 Nachricht ins Log und sollte im Regelbetrieb `false` bleiben.
 
+## Tests
+
+`tests/run_tests.sh` fuehrt Funktionstests gegen einen lokalen Nachbau der
+Telegram-API aus (`tests/mock_telegram.php`). Die echte Gruppe wird dabei nie
+angesprochen, State und Log liegen in einem Temporaerverzeichnis, die
+osTicket-Datenbank wird nur lesend benutzt.
+
+```bash
+tests/run_tests.sh /opt/ticketbot/ticketbot_config.php
+```
+
+Abgedeckt sind unter anderem Erststart, Rate-Limit, Telegram-Stoerung,
+widerrufener Token, Bot aus der Gruppe entfernt, HTML statt JSON,
+MarkdownV2-Parsefehler mit Klartext-Fallback, haengende Verbindung, falsches
+DB-Passwort, unvollstaendige Konfiguration und parallele Laeufe.
+
 ## Dateien zur Laufzeit
 
 | Pfad | Zweck |
@@ -98,8 +114,13 @@ Gruppe laufen wuerde.
 - **Voruebergehende Fehler** (HTTP 429, 5xx, Netzwerkfehler) brechen den Lauf
   ab, ohne den Stand fortzuschreiben. Der naechste Lauf setzt an derselben
   Stelle an, es geht keine Benachrichtigung verloren.
-- **Dauerhafte Ablehnungen** ruecken den Stand weiter, damit ein einzelnes
-  unzustellbares Ticket die Warteschlange nicht blockiert.
+- **Nur nachrichtenspezifische Fehler** (Telegram lehnt genau diese eine
+  Nachricht ab) ruecken den Stand weiter, damit ein einzelnes unzustellbares
+  Ticket die Warteschlange nicht blockiert. Vorher wird die Nachricht einmal
+  als Klartext ohne Formatierung erneut versucht.
+- **Konfigurationsfehler** (Token widerrufen, Bot aus der Gruppe entfernt,
+  falsche Chat-ID) halten den Lauf an und werden im Log als solche markiert.
+  Kein Ticket geht verloren, bis der Fehler behoben ist.
 
 ## Zugangsdaten
 

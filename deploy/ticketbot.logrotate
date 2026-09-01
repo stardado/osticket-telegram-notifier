@@ -12,5 +12,4 @@
     delaycompress
     copytruncate
     su www-data www-data
-    create 0640 www-data www-data
 }
