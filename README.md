@@ -182,6 +182,35 @@ Chat-ID, einen internen Hostnamen oder ein DB-Passwort enthalten. Der Hook ist
 erst nach `git config core.hooksPath .githooks` aktiv -- dieser Schritt gehoert
 zur Installation.
 
+## Haftungsausschluss
+
+Diese Software wird ohne jede Gewaehrleistung bereitgestellt, „wie sie ist".
+Sie greift lesend und – bei aktivierten Buttons – schreibend auf die
+osTicket-Datenbank zu und veraendert Ticketstatus. Der Einsatz erfolgt auf
+eigene Verantwortung. Vor dem Produktivbetrieb sollte man die Testsuite gegen
+die eigene Installation laufen lassen und ein Datenbank-Backup haben.
+
+Insbesondere uebernehmen die Autoren keine Haftung fuer verpasste oder
+doppelte Benachrichtigungen, versehentlich geschlossene Tickets, Datenverlust
+oder Schaeden, die aus dem Einsatz dieser Software entstehen. Die
+vollstaendige Regelung steht in der GNU GPL v3, Abschnitte 15 und 16.
+
+Dieses Projekt steht in keiner Verbindung zu osTicket / Enhancesoft oder zu
+Telegram.
+
+## Hinweis zur Entstehung mit KI-Unterstuetzung
+
+Wesentliche Teile dieses Repositories – Code-Review des urspruenglichen
+Scripts, Fehlerbehebungen, die Schliessen-Funktion, Selbstueberwachung,
+Testsuite und Dokumentation – sind mit Unterstuetzung von Claude (Anthropic)
+ueber Claude Code entstanden. Die Arbeit erfolgte iterativ im Dialog; jede
+Aenderung wurde gegen die echte osTicket-Installation getestet und vom
+Maintainer geprueft und freigegeben. Die Verantwortung fuer den Code liegt
+beim Maintainer, nicht beim KI-Werkzeug.
+
+Wer Fehler findet, meldet sie bitte als Issue – unabhaengig davon, ob die
+betreffende Zeile von einem Menschen oder mit KI-Hilfe geschrieben wurde.
+
 ## Lizenz
 
 Copyright (C) 2025-2026 Denis Apel (stardado)
