@@ -114,6 +114,18 @@ reset ok; echo $((MAXID-1)) >"$T/last_ticket_id.txt"
 flock -x "$T/ticketbot.lock" -c 'sleep 2' & FL=$!; sleep 0.3; run; wait $FL
 check "Lauf uebersprungen, State unveraendert"          'grep -q "anderer Lauf" "$T/bot.log" && [ "$(state)" = "$((MAXID-1))" ]'
 
+echo "[15] Link-URL mit Sonderzeichen"
+reset ok; echo $((MAXID-1)) >"$T/last_ticket_id.txt"
+sed -i "s|'ticket_url_base' => '[^']*'|'ticket_url_base' => 'https://x.example/t(1)/?id='|" "$T/ticketbot_config.php"; run
+check "')' im Link escaped"                            'grep -q "t(1\\\\\\\\)/" "$MOCK_LOG"'
+check "Nachricht zugestellt"                            '[ "$(state)" = "$MAXID" ]'
+sed -i "s|'ticket_url_base' => '[^']*'|'ticket_url_base' => 'https://ticket.example.org/scp/tickets.php?id='|" "$T/ticketbot_config.php"
+
+echo "[16] State-Datei wird atomar geschrieben"
+reset ok; echo $((MAXID-1)) >"$T/last_ticket_id.txt"; run
+check "keine .tmp-Datei zurueckgelassen"                '[ ! -e "$T/last_ticket_id.txt.tmp" ]'
+check "Inhalt korrekt"                                  '[ "$(state)" = "$MAXID" ]'
+
 echo
 echo "Ergebnis: $PASS bestanden, $FAIL fehlgeschlagen"
 [ "$FAIL" -eq 0 ]

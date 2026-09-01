@@ -99,6 +99,23 @@ function cleanAndEscape($text) {
 }
 
 /**
+ * Zuletzt gemeldete Ticket-ID atomar schreiben.
+ *
+ * file_put_contents leert die Datei und schreibt dann. Ein Stromausfall
+ * dazwischen hinterlaesst eine leere Datei, (int)'' ist 0, und die Seed-Logik
+ * setzt beim naechsten Lauf auf MAX(ticket_id) - alle inzwischen eingegangenen
+ * Tickets waeren still uebersprungen. Schreiben in eine Tempdatei und rename()
+ * ist auf POSIX atomar: es gibt nur den alten oder den neuen Inhalt.
+ */
+function writeState(string $file, int $id): void {
+    $tmp = $file . '.tmp';
+    if (file_put_contents($tmp, (string)$id, LOCK_EX) === false || !rename($tmp, $file)) {
+        logMessage("❌ State-Datei $file konnte nicht geschrieben werden!");
+        exit(1);
+    }
+}
+
+/**
  * Eine Nachricht an die Telegram-API senden.
  *
  * Rueckgabe: ['ok' => bool, 'code' => int, 'desc' => string, 'msg_id' => int]
@@ -178,7 +195,7 @@ $last_id = file_exists($lastIdFile) ? (int)file_get_contents($lastIdFile) : 0;
 if ($last_id <= 0) {
     $seed = $conn->query("SELECT MAX(ticket_id) AS m FROM ost_ticket");
     $last_id = $seed ? (int)($seed->fetch_assoc()['m'] ?? 0) : 0;
-    file_put_contents($lastIdFile, $last_id, LOCK_EX);
+    writeState($lastIdFile, $last_id);
     logMessage("🔰 Kein gueltiger Stand gefunden. Startpunkt auf hoechste Ticket-ID $last_id gesetzt, es wird nichts nachgesendet.");
     $conn->close();
     exit(0);
@@ -221,10 +238,12 @@ if ($result->num_rows > 0) {
         $created = cleanAndEscape($dt->format('d.m.Y H:i'));
 
         $link = $ticketBaseURL . $ticketId;
+        // Innerhalb von (...) eines MarkdownV2-Links muessen ')' und '\\' escaped sein.
+        $mdLink = strtr($link, ['\\' => '\\\\', ')' => '\\)']);
 
         // Nachricht vorbereiten
-        $message = "📬 [Neues Ticket eingegangen\\!]($link)\n"
-                 . "🆔 [Ticket\\-ID: \\#$ticketNumber]($link)\n\n"
+        $message = "📬 [Neues Ticket eingegangen\\!]($mdLink)\n"
+                 . "🆔 [Ticket\\-ID: \\#$ticketNumber]($mdLink)\n\n"
 		 . "📝 Betreff: $subject\n\n"
                  . "👤 Von: $name 🕒 Zeit: $created";
 
@@ -258,7 +277,7 @@ if ($result->num_rows > 0) {
 
         if ($r['ok']) {
             logMessage("✅ Telegram gesendet für Ticket #$ticketNumber (ID $ticketId), msg_id: {$r['msg_id']}");
-            file_put_contents($lastIdFile, $ticketId, LOCK_EX);
+            writeState($lastIdFile, $ticketId);
             continue;
         }
 
@@ -274,7 +293,7 @@ if ($result->num_rows > 0) {
             // mit der Nachricht zu tun hat ('chat not found' ist Konfiguration).
             if (stripos($r['desc'], 'chat not found') === false && stripos($r['desc'], 'chat_id') === false) {
                 logMessage("❌ Ticket $ticketNumber nicht zustellbar (400: {$r['desc']}), wird uebersprungen.");
-                file_put_contents($lastIdFile, $ticketId, LOCK_EX);
+                writeState($lastIdFile, $ticketId);
                 continue;
             }
         }
