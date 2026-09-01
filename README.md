@@ -112,6 +112,6 @@ zur Installation.
 
 ## Lizenz
 
-Copyright (C) 2025-2026 stardado
+Copyright (C) 2025-2026 Denis Apel (stardado)
 
 GNU General Public License v3.0, siehe [LICENSE](LICENSE).

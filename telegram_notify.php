@@ -3,7 +3,7 @@
  * osTicket Telegram Notifier
  * Meldet neu eingegangene osTicket-Tickets in eine Telegram-Gruppe.
  *
- * Copyright (C) 2025-2026 stardado
+ * Copyright (C) 2025-2026 Denis Apel (stardado)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
