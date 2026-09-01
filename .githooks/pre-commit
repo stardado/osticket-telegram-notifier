@@ -1,9 +1,9 @@
 #!/bin/bash
-# Schutz gegen versehentlich committete Zugangsdaten.
+# Verhindert, dass Konfigurationswerte versehentlich committet werden.
 # Aktivierung (einmalig nach dem Clone):  git config core.hooksPath .githooks
 #
-# Dieses Repo ist oeffentlich. Was einmal in der History steht, ist dauerhaft
-# oeffentlich - auch wenn es im naechsten Commit wieder geloescht wird.
+# Eigene Muster (z.B. der eigene Hostname) gehoeren in .githooks/local-patterns,
+# eine Zeile je Muster (grep -E). Die Datei ist in .gitignore.
 
 fail=0
 red() { printf '\033[31m%s\033[0m\n' "$1"; }
@@ -30,7 +30,11 @@ while IFS= read -r f; do
 
     check '[0-9]{8,10}:[A-Za-z0-9_-]{35}' "einen echten Telegram-Bot-Token"
     check '\-100[0-9]{10,}'               "eine echte Telegram-Chat-ID"
-    check 'izrd\.(eu|de)'                 "einen internen Hostnamen"
+    if [ -f "$(dirname "$0")/local-patterns" ]; then
+        while IFS= read -r pat; do
+            [ -n "$pat" ] && check "$pat" "ein lokal definiertes Muster ($pat)"
+        done < "$(dirname "$0")/local-patterns"
+    fi
 
     # db_pass: nur in Config-Dateien pruefen, sonst schlagen Testskripte an,
     # die absichtlich falsche Werte eintragen

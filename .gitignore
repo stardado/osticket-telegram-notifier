@@ -1,5 +1,6 @@
-# Echte Zugangsdaten - niemals committen!
+# Lokale Konfiguration
 ticketbot_config.php
+.githooks/local-patterns
 
 # Laufzeit
 *.log

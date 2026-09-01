@@ -42,7 +42,7 @@ $lastIdFile = "$stateDir/last_ticket_id.txt";
 
 // Sperre gegen parallele Laeufe. Cron startet jede Minute; ein Lauf mit
 // Rueckstand dauert laenger. Ohne Sperre senden mehrere Prozesse dieselben
-// Tickets mehrfach - am 01.09.2026 bis zu 4x pro Ticket.
+// Tickets mehrfach - in der Praxis bis zu 4x pro Ticket.
 $lock = tb_lock($config, 'ticketbot');
 $conn = tb_db($config);
 tb_apply_timezone($config, $conn);
@@ -52,9 +52,8 @@ $last_id = tb_read_state($lastIdFile);
 
 // Kein brauchbarer Stand? Dann auf die aktuell hoechste Ticket-ID setzen und
 // nichts versenden. Ohne diese Absicherung startet der Bot bei ID 0 und
-// schickt die komplette Ticket-Historie erneut in die Gruppe - genau das ist
-// am 01.09.2026 nach einem Reboot passiert, als die State-Datei noch in /tmp
-// lag und mit dem Neustart verschwand.
+// schickt die komplette Ticket-Historie erneut in die Gruppe - genau das
+// passiert, wenn die State-Datei in /tmp liegt und ein Reboot sie loescht.
 if ($last_id <= 0) {
     $seed = $conn->query("SELECT MAX(ticket_id) AS m FROM {$prefix}ticket");
     $last_id = $seed ? (int)($seed->fetch_assoc()['m'] ?? 0) : 0;

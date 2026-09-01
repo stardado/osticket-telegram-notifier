@@ -78,9 +78,6 @@ Bot auf demselben Server laeuft wie osTicket.
 git clone <repo-url> /opt/ticketbot
 cd /opt/ticketbot
 
-# Secret-Schutz aktivieren (siehe unten)
-git config core.hooksPath .githooks
-
 # Konfiguration anlegen
 cp config.example.php ticketbot_config.php
 chown root:www-data ticketbot_config.php
@@ -172,15 +169,6 @@ Gruppe laufen wuerde.
 - **Konfigurationsfehler** (Token widerrufen, Bot aus der Gruppe entfernt,
   falsche Chat-ID) halten den Lauf an und werden im Log als solche markiert.
   Kein Ticket geht verloren, bis der Fehler behoben ist.
-
-## Zugangsdaten
-
-`ticketbot_config.php` steht in `.gitignore` und gehoert nie ins Repository.
-
-Zusaetzlich blockiert `.githooks/pre-commit` Commits, die einen Bot-Token, eine
-Chat-ID, einen internen Hostnamen oder ein DB-Passwort enthalten. Der Hook ist
-erst nach `git config core.hooksPath .githooks` aktiv -- dieser Schritt gehoert
-zur Installation.
 
 ## Haftungsausschluss
 
