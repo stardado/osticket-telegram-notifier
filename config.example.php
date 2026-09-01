@@ -23,6 +23,10 @@ return [
     'db_pass' => 'DEIN_DB_PASSWORT',
     'db_name' => 'osticket',
 
+    // Schreibt den vollstaendigen Nachrichtentext jeder Meldung ins Log.
+    // Nur zur Fehlersuche - laesst das Log sonst schnell auf Hunderte MB wachsen.
+    'debug' => false,
+
     // Basis-URL fuer Ticket-Links, die Ticket-ID wird angehaengt
     'ticket_url_base' => 'https://ticket.example.org/scp/tickets.php?id=',
 ];

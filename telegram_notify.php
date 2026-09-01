@@ -10,8 +10,9 @@ $db_user        = $config['db_user'];
 $db_pass        = $config['db_pass'];
 $db_name        = $config['db_name'];
 $ticketBaseURL  = $config['ticket_url_base'];
-$lastIdFile     = '/tmp/last_ticket_id.txt';
+$lastIdFile     = '/var/lib/ticketbot/last_ticket_id.txt';
 $logFile        = '/var/log/ticketbot.log';
+$debug          = (bool)($config['debug'] ?? false);
 $lockFile       = '/var/lib/ticketbot/ticketbot.lock';
 $maxPerRun      = 20;   // Telegram drosselt Gruppen bei etwa 20 Nachrichten/Minute
 
@@ -77,6 +78,20 @@ $conn->set_charset("utf8mb4");
 // letzte Ticket-ID laden
 $last_id = file_exists($lastIdFile) ? (int)file_get_contents($lastIdFile) : 0;
 
+// Kein brauchbarer Stand? Dann auf die aktuell hoechste Ticket-ID setzen und
+// nichts versenden. Ohne diese Absicherung startet der Bot bei ID 0 und
+// schickt die komplette Ticket-Historie erneut in die Gruppe - genau das ist
+// am 01.09.2026 nach einem Reboot passiert, als die State-Datei noch in /tmp
+// lag und mit dem Neustart verschwand.
+if ($last_id <= 0) {
+    $seed = $conn->query("SELECT MAX(ticket_id) AS m FROM ost_ticket");
+    $last_id = $seed ? (int)($seed->fetch_assoc()['m'] ?? 0) : 0;
+    file_put_contents($lastIdFile, $last_id, LOCK_EX);
+    logMessage("🔰 Kein gueltiger Stand gefunden. Startpunkt auf hoechste Ticket-ID $last_id gesetzt, es wird nichts nachgesendet.");
+    $conn->close();
+    exit(0);
+}
+
 // neue Tickets abfragen
 $sql = "SELECT T.ticket_id, T.number, U.name, C.subject, T.created
         FROM ost_ticket T
@@ -121,7 +136,9 @@ if ($result->num_rows > 0) {
 		 . "📝 Betreff: $subject\n\n"
                  . "👤 Von: $name 🕒 Zeit: $created";
 
-        logMessage("🔍 DEBUG Text für Ticket $ticketNumber:\n$message");
+        if ($debug) {
+            logMessage("🔍 DEBUG Text für Ticket $ticketNumber:\n$message");
+        }
 
         $url = "https://api.telegram.org/bot$telegramToken/sendMessage";
         $data = [
