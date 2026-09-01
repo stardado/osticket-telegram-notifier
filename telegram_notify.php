@@ -12,6 +12,8 @@ $db_name        = $config['db_name'];
 $ticketBaseURL  = $config['ticket_url_base'];
 $lastIdFile     = '/tmp/last_ticket_id.txt';
 $logFile        = '/var/log/ticketbot.log';
+$lockFile       = '/var/lib/ticketbot/ticketbot.lock';
+$maxPerRun      = 20;   // Telegram drosselt Gruppen bei etwa 20 Nachrichten/Minute
 
 // Logfunktion
 function logMessage($text) {
@@ -54,6 +56,16 @@ function cleanAndEscape($text) {
     return strtr($text, $replacements);
 }
 
+// Sperre gegen parallele Laeufe.
+// Cron startet jede Minute; ein Lauf mit Rueckstand dauert laenger als eine
+// Minute. Ohne Sperre arbeiten mehrere Prozesse dieselbe Warteschlange ab und
+// senden dieselben Tickets mehrfach - am 01.09.2026 bis zu 4x pro Ticket.
+$lock = fopen($lockFile, 'c');
+if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
+    logMessage("⏭️ Ein anderer Lauf ist noch aktiv, dieser Lauf wird uebersprungen.");
+    exit(0);
+}
+
 // Verbindung zur Datenbank
 $conn = new mysqli($db_host, $db_user, $db_pass, $db_name);
 if ($conn->connect_error) {
@@ -81,7 +93,17 @@ if ($result === false) {
 }
 
 if ($result->num_rows > 0) {
+    $sent = 0;
     while ($row = $result->fetch_assoc()) {
+        if ($sent >= $maxPerRun) {
+            logMessage("⏸️ Obergrenze von $maxPerRun Nachrichten erreicht, Rest folgt im naechsten Lauf.");
+            break;
+        }
+        if ($sent > 0) {
+            sleep(1);   // Abstand halten, damit Telegram nicht drosselt
+        }
+        $sent++;
+
         $ticketId     = (int)$row['ticket_id'];
         $ticketNumber = cleanAndEscape($row['number'] ?? '');
         $name         = cleanAndEscape($row['name'] ?? 'Unbekannt');
