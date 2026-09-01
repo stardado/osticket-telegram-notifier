@@ -42,6 +42,7 @@ foreach ($actions as $a) {
 }
 
 $lock = tb_lock($config, 'actions');
+tb_apply_timezone($config);   // aus Konfiguration oder dem von telegram_notify.php ermittelten Wert
 
 // Long-Polling: Cron kann hoechstens minuetlich starten, ein Klick soll aber
 // sofort wirken. Deshalb wartet jeder Lauf bis zu poll_seconds aktiv auf

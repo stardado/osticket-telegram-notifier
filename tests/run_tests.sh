@@ -178,6 +178,27 @@ echo "[25] Alarm bei getUpdates-Konflikt (actions)"
 reset 409; cq 600 -100999 "noop"; runact
 check "409 alarmiert"                                   'grep -q "Ticketbot-Fehler \[actions:getupdates\]" "$MOCK_LOG"'
 
+echo "[26] Uhrzeit in osTicket-Zeitzone statt DB-Zeitzone"
+reset ok; echo $((MAXID-1)) >"$T/last_ticket_id.txt"; rm -f "$T/timezone.txt"; run
+EXPECT=$(php -r '$c=require $argv[1]; $m=new mysqli($c["db_host"],$c["db_user"],$c["db_pass"],$c["db_name"]); $p=$c["db_prefix"]??"ost_";
+  $tz=$m->query("SELECT value FROM {$p}config WHERE namespace=\"core\" AND `key`=\"default_timezone\"")->fetch_assoc()["value"];
+  $z=$m->query("SELECT @@session.time_zone s, @@system_time_zone sys")->fetch_assoc(); $dbtz=$z["s"]==="SYSTEM"?$z["sys"]:$z["s"];
+  $cr=$m->query("SELECT created FROM {$p}ticket WHERE ticket_id=".(int)$argv[2])->fetch_assoc()["created"];
+  echo (new DateTime($cr,new DateTimeZone($dbtz)))->setTimezone(new DateTimeZone($tz))->format("d.m.Y H:i");' "$REAL_CONFIG" "$MAXID")
+check "Zeit = $EXPECT (osTicket-Zone)"                  'grep -qF "$(echo "$EXPECT" | cut -c7-)" "$MOCK_LOG"'
+check "Zeitzone fuer actions zwischengespeichert"       '[ -s "$T/timezone.txt" ]'
+
+echo "[27] Zeitzone per Konfiguration ueberschreibbar"
+reset ok; echo $((MAXID-1)) >"$T/last_ticket_id.txt"
+setcfg() { php -r '$c=require $argv[1]; if ($argv[3]==="") unset($c[$argv[2]]); else $c[$argv[2]]=$argv[3]; file_put_contents($argv[1],"<?php\nreturn ".var_export($c,true).";\n");' "$T/ticketbot_config.php" "$1" "$2"; }
+setcfg timezone Pacific/Kiritimati; run
+EXPECT2=$(php -r '$c=require $argv[1]; $m=new mysqli($c["db_host"],$c["db_user"],$c["db_pass"],$c["db_name"]); $p=$c["db_prefix"]??"ost_";
+  $z=$m->query("SELECT @@session.time_zone s, @@system_time_zone sys")->fetch_assoc(); $dbtz=$z["s"]==="SYSTEM"?$z["sys"]:$z["s"];
+  $cr=$m->query("SELECT created FROM {$p}ticket WHERE ticket_id=".(int)$argv[2])->fetch_assoc()["created"];
+  echo (new DateTime($cr,new DateTimeZone($dbtz)))->setTimezone(new DateTimeZone("Pacific/Kiritimati"))->format("d.m.Y H:i");' "$REAL_CONFIG" "$MAXID")
+check "Zeit = $EXPECT2 (UTC+14)"                        'grep -qF "$(echo "$EXPECT2" | cut -c7-)" "$MOCK_LOG"'
+setcfg timezone ""
+
 echo
 echo "Ergebnis: $PASS bestanden, $FAIL fehlgeschlagen"
 [ "$FAIL" -eq 0 ]

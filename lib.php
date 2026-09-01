@@ -225,6 +225,58 @@ function tb_alerts_write(string $file, array $active): void {
     }
 }
 
+/**
+ * Anzeige-Zeitzone festlegen. Reihenfolge: 'timezone' aus der Konfiguration,
+ * sonst osTickets eigene Einstellung (default_timezone), sonst der zuletzt
+ * ermittelte Wert aus dem State-Verzeichnis, sonst die PHP-Voreinstellung.
+ *
+ * Hintergrund: viele Server laufen komplett auf UTC, osTicket rechnet bei der
+ * Anzeige in die konfigurierte Zone um - der Bot muss das genauso tun, sonst
+ * stehen in den Meldungen UTC-Zeiten.
+ */
+function tb_apply_timezone(array $c, ?mysqli $conn = null): string {
+    $cache = $c['state_dir'] . '/timezone.txt';
+    $tz    = trim((string)($c['timezone'] ?? ''));
+    if ($tz === '' && $conn) {
+        $q = $conn->query("SELECT value FROM {$c['db_prefix']}config WHERE namespace = 'core' AND `key` = 'default_timezone'");
+        $tz = $q ? trim((string)($q->fetch_assoc()['value'] ?? '')) : '';
+        if ($tz !== '' && is_writable($c['state_dir'])) {
+            @file_put_contents($cache, $tz);
+        }
+    }
+    if ($tz === '' && is_file($cache)) {
+        $tz = trim((string)file_get_contents($cache));
+    }
+    if ($tz !== '' && in_array($tz, DateTimeZone::listIdentifiers(), true)) {
+        date_default_timezone_set($tz);
+    } elseif ($tz !== '') {
+        tb_log("⚠️ Zeitzone '$tz' ist ungueltig, es bleibt bei " . date_default_timezone_get());
+    }
+    return date_default_timezone_get();
+}
+
+/**
+ * Einen DATETIME-Wert aus der Datenbank in die Anzeige-Zeitzone umrechnen.
+ * MySQL liefert die Werte in seiner Session-Zeitzone (meist SYSTEM), nicht in
+ * der Zone von PHP.
+ */
+function tb_db_time(mysqli $conn, string $value): DateTime {
+    static $dbTz = null;
+    if ($dbTz === null) {
+        $dbTz = new DateTimeZone('UTC');
+        $q = $conn->query("SELECT @@session.time_zone AS s, @@system_time_zone AS sys");
+        if ($q && ($row = $q->fetch_assoc())) {
+            $name = ($row['s'] === 'SYSTEM') ? $row['sys'] : $row['s'];
+            try {
+                $dbTz = new DateTimeZone($name);
+            } catch (Throwable $e) {
+                tb_log("⚠️ MySQL-Zeitzone '$name' nicht interpretierbar, nehme UTC an.");
+            }
+        }
+    }
+    return (new DateTime($value, $dbTz))->setTimezone(new DateTimeZone(date_default_timezone_get()));
+}
+
 /** Verbindung zur osTicket-Datenbank, Fehler landen im Log statt als Exception. */
 function tb_db(array $c): mysqli {
     // Seit PHP 8.1 wirft mysqli standardmaessig Exceptions; connect_error

@@ -45,6 +45,7 @@ $lastIdFile = "$stateDir/last_ticket_id.txt";
 // Tickets mehrfach - am 01.09.2026 bis zu 4x pro Ticket.
 $lock = tb_lock($config, 'ticketbot');
 $conn = tb_db($config);
+tb_apply_timezone($config, $conn);
 
 // letzte Ticket-ID laden
 $last_id = tb_read_state($lastIdFile);
@@ -101,7 +102,7 @@ while ($row = $result->fetch_assoc()) {
     $rawNumber    = $row['number'] ?? '';
     $rawName      = $row['name'] ?? 'Unbekannt';
     $rawSubject   = $row['subject'] ?? '(kein Betreff)';
-    $rawCreated   = (new DateTime($row['created'] ?? 'now'))->format('d.m.Y H:i');
+    $rawCreated   = tb_db_time($conn, $row['created'] ?? 'now')->format('d.m.Y H:i');
 
     $link = $config['ticket_url_base'] . $ticketId;
     // Innerhalb von (...) eines MarkdownV2-Links muessen ')' und '\' escaped sein.

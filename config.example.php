@@ -25,6 +25,12 @@ return [
     // Tabellenpraefix, entspricht TABLE_PREFIX in include/ost-config.php
     'db_prefix' => 'ost_',
 
+    // Zeitzone fuer alle Uhrzeiten in den Nachrichten. Ohne Eintrag wird
+    // osTickets eigene Einstellung (Admin-Panel -> System -> Zeitzone) uebernommen.
+    // Viele Server laufen komplett auf UTC - ohne Umrechnung stuenden in den
+    // Meldungen UTC-Zeiten.
+    // 'timezone' => 'Europe/Berlin',
+
     // Fehler des Bots selbst (DB weg, Prozess haengt, Ticket unzustellbar)
     // werden per Telegram gemeldet - pro Fehlerart hoechstens einmal je Stunde,
     // mit Entwarnung, sobald es wieder laeuft. Standard ist die Ticket-Gruppe;
