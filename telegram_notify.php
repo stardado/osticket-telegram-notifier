@@ -30,11 +30,16 @@ $db_user        = $config['db_user'];
 $db_pass        = $config['db_pass'];
 $db_name        = $config['db_name'];
 $ticketBaseURL  = $config['ticket_url_base'];
-$lastIdFile     = '/var/lib/ticketbot/last_ticket_id.txt';
-$logFile        = '/var/log/ticketbot.log';
 $debug          = (bool)($config['debug'] ?? false);
-$lockFile       = '/var/lib/ticketbot/ticketbot.lock';
 $maxPerRun      = 20;   // Telegram drosselt Gruppen bei etwa 20 Nachrichten/Minute
+
+// Die folgenden Werte sind nur fuer Tests gedacht und brauchen im Regelbetrieb
+// keinen Eintrag in der Konfiguration.
+$apiBase        = rtrim($config['api_base'] ?? 'https://api.telegram.org', '/');
+$stateDir       = rtrim($config['state_dir'] ?? '/var/lib/ticketbot', '/');
+$logFile        = $config['log_file'] ?? '/var/log/ticketbot.log';
+$lastIdFile     = "$stateDir/last_ticket_id.txt";
+$lockFile       = "$stateDir/ticketbot.lock";
 
 // Logfunktion
 function logMessage($text) {
@@ -160,7 +165,7 @@ if ($result->num_rows > 0) {
             logMessage("🔍 DEBUG Text für Ticket $ticketNumber:\n$message");
         }
 
-        $url = "https://api.telegram.org/bot$telegramToken/sendMessage";
+        $url = "$apiBase/bot$telegramToken/sendMessage";
         $data = [
             'chat_id' => $chatId,
             'text' => $message,

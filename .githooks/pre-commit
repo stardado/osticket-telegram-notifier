@@ -16,7 +16,7 @@ if git diff --cached --name-only | grep -qx 'ticketbot_config.php'; then
 fi
 
 # 2) Inhalt der gestageten Dateien auf Geheimnis-Muster pruefen
-for f in $(git diff --cached --name-only --diff-filter=ACM); do
+while IFS= read -r f; do
     [ -f "$f" ] || continue
     content=$(git show ":$f" 2>/dev/null) || continue
 
@@ -32,7 +32,9 @@ for f in $(git diff --cached --name-only --diff-filter=ACM); do
     check '\-100[0-9]{10,}'               "eine echte Telegram-Chat-ID"
     check 'izrd\.(eu|de)'                 "einen internen Hostnamen"
 
-    # db_pass: Wert extrahieren und gegen die erlaubten Platzhalter pruefen
+    # db_pass: nur in Config-Dateien pruefen, sonst schlagen Testskripte an,
+    # die absichtlich falsche Werte eintragen
+    case "$f" in *config*.php) ;; *) continue ;; esac
     pass=$(printf '%s' "$content" \
         | grep -oE "'db_pass'[[:space:]]*=>[[:space:]]*'[^']*'" \
         | sed -E "s/.*=>[[:space:]]*'([^']*)'/\1/")
@@ -40,7 +42,7 @@ for f in $(git diff --cached --name-only --diff-filter=ACM); do
         red "BLOCKIERT: $f enthaelt ein echtes DB-Passwort"
         fail=1
     fi
-done
+done < <(git diff --cached --name-only --diff-filter=ACM)
 
 if [ "$fail" -ne 0 ]; then
     red ""
