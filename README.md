@@ -55,6 +55,16 @@ verarbeitet.
 Fuer den Bot darf **kein Webhook** gesetzt sein, sonst liefert `getUpdates`
 einen 409-Konflikt.
 
+**Warum nicht ueber die osTicket-REST-API?** Die
+[offizielle API](https://docs.osticket.com/en/latest/Developer%20Documentation/API%20Docs.html)
+kann nur Tickets *anlegen* (`POST /api/tickets.json`) und den Cron anstossen;
+Statuswechsel, Notizen oder das Abrufen eines Tickets sind nicht vorgesehen
+(„For now, only ticket creation is supported"). Auch in osTicket 1.18 sind
+das die einzigen Routen in `api/http.php`. Deshalb laedt
+`telegram_actions.php` osTicket lokal so, wie es `api/cron.php` selbst tut,
+und nutzt dieselben Klassen wie das Agenten-Panel. Das setzt voraus, dass der
+Bot auf demselben Server laeuft wie osTicket.
+
 ## Voraussetzungen
 
 - osTicket mit MySQL/MariaDB
