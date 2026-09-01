@@ -208,6 +208,11 @@ if ($result->num_rows > 0) {
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data, '', '&', PHP_QUERY_RFC3986));
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        // Ohne Timeouts haelt eine haengende Verbindung die flock-Sperre fuer
+        // immer, und jeder weitere Cron-Lauf beendet sich mit 'anderer Lauf
+        // aktiv'. Der Bot stuende still, das Log saehe harmlos aus.
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         $response = curl_exec($ch);
         $error = curl_error($ch);
         curl_close($ch);
